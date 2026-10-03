@@ -31,7 +31,18 @@ DEFAULTS = {
     "buy_only": False,
     "allowed_symbols": [],           # empty = all allowed
     "blocked_symbols": [],
+    "universe": "sp500",             # sp500 | materials | sp500+materials | any
 }
+
+
+def load_universe():
+    """Load S&P 500 + Materials universe from universe.json."""
+    upath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "universe.json")
+    try:
+        with open(upath) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"sp500": [], "materials": []}
 
 
 class Guardrails:
@@ -97,6 +108,18 @@ class Guardrails:
             return False, f"{symbol} not on allowlist."
         if cfg["buy_only"] and side.lower() in ("sell", "short"):
             return False, "Buy-only mode — sells rejected."
+
+        # Universe restriction (S&P 500 / Materials)
+        universe_mode = cfg.get("universe", "any")
+        if universe_mode != "any":
+            uni = load_universe()
+            allowed = set()
+            if "sp500" in universe_mode:
+                allowed.update(s.upper() for s in uni.get("sp500", []))
+            if "materials" in universe_mode:
+                allowed.update(s.upper() for s in uni.get("materials", []))
+            if allowed and symbol not in allowed:
+                return False, f"{symbol} not in {universe_mode} universe."
 
         notional = quantity * price
         if notional > cfg["max_position_usd"]:

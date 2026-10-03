@@ -127,6 +127,27 @@ def test_cooldown():
     assert allowed is True
 
 
+def test_universe_sp500():
+    g = make_guards(universe="sp500")
+    allowed, _ = g.check("AAPL", "buy", 1, 10)
+    assert allowed is True
+    allowed, reason = g.check("GME", "buy", 1, 10)
+    assert allowed is False and "universe" in reason
+
+
+def test_universe_materials():
+    g = make_guards(universe="materials")
+    allowed, _ = g.check("LIN", "buy", 1, 10)
+    assert allowed is True
+    allowed, reason = g.check("AAPL", "buy", 1, 10)
+    assert allowed is False and "universe" in reason
+
+
+def test_universe_any():
+    g = make_guards(universe="any")
+    allowed, _ = g.check("GME", "buy", 1, 10)
+    assert allowed is True
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
@@ -141,3 +162,4 @@ if __name__ == "__main__":
             failed += 1
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
+

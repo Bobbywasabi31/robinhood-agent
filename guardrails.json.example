@@ -1,0 +1,13 @@
+{
+  "trading_enabled": false,
+  "paper_trading": true,
+  "require_approval": true,
+  "max_position_usd": 100.0,
+  "max_daily_loss_usd": 50.0,
+  "max_daily_trades": 10,
+  "min_seconds_between_trades": 60,
+  "buy_only": false,
+  "allowed_symbols": [],
+  "blocked_symbols": [],
+  "universe": "sp500"
+}
