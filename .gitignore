@@ -1,0 +1,6 @@
+guardrails.json
+.agent_state.json
+agent.log
+__pycache__/
+*.pyc
+.env
