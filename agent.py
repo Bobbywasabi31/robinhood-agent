@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """
-Robinhood Agentic Trading agent.
-Connects to Robinhood's official MCP server and trades within guardrails.
+Robinhood Agentic Trading agent — hardened.
 
-Usage:
-  python3 agent.py status              # account status, positions
-  python3 agent.py quote AAPL          # get a quote
-  python3 agent.py buy AAPL 10         # buy 10 shares (requires approval unless disabled)
-  python3 agent.py sell AAPL 5         # sell 5 shares
+Commands:
+  status              Account, positions, available tools
+  quote SYMBOL        Current quote
+  buy SYMBOL QTY      Buy (guardrails + approval)
+  sell SYMBOL QTY     Sell (guardrails + approval)
+  paper SYMBOL QTY    Simulate a buy without touching the API
+  journal             Today's trade journal + P&L summary
+  tools               List raw MCP tools from the server
 
-Auth: set ROBINHOOD_MCP_TOKEN env var after completing OAuth.
-See README.md for the OAuth setup walkthrough.
+Auth: export ROBINHOOD_MCP_TOKEN="..."
+Safety: guardrails.json — trading_enabled defaults to false,
+        paper_trading defaults to true.
 """
 import json
 import os
+import re
 import sys
 
-from mcp_client import RobinhoodMCPClient, MCPError
+from mcp_client import RobinhoodMCPClient, MCPError, MCPAuthError
 from guardrails import Guardrails
 
 
@@ -27,106 +31,141 @@ def get_client():
         sys.exit(1)
     client = RobinhoodMCPClient(access_token=token)
     try:
-        client.initialize()
+        info = client.initialize()
+        server = (info or {}).get("serverInfo", {})
+        if server:
+            print(f"Connected to {server.get('name', 'MCP server')} v{server.get('version', '?')}")
+    except MCPAuthError as e:
+        print(f"Authentication failed: {e}")
+        print("Your token may have expired. Re-run the OAuth flow (see README).")
+        sys.exit(1)
     except MCPError as e:
-        print(f"Failed to connect: {e}")
+        print(f"Connection failed: {e}")
         sys.exit(1)
     return client
 
 
-def find_tool(client, keywords):
-    """Find a tool whose name matches keywords (server tool names may vary)."""
-    for tool in client.list_tools():
-        name = tool.get("name", "").lower()
-        if all(k.lower() in name for k in keywords):
-            return tool["name"]
-    return None
+def extract_price(quote_result):
+    """Best-effort price extraction from a quote tool result."""
+    text = json.dumps(quote_result)
+    for field in ("last_trade_price", "last_price", "mark_price", "ask_price", "bid_price", "price", "last"):
+        m = re.search(rf'"{field}"\s*:\s*"?([\d.]+)"?', text)
+        if m:
+            try:
+                p = float(m.group(1))
+                if p > 0:
+                    return p
+            except ValueError:
+                continue
+    return 0
+
+
+def get_price(client, symbol):
+    tool = client.find_tool("quote") or client.find_tool("price")
+    if not tool:
+        return 0, "no quote tool on server"
+    try:
+        result = client.call_tool(tool, {"symbol": symbol.upper()})
+        price = extract_price(result)
+        return price, "" if price > 0 else "could not parse price"
+    except MCPError as e:
+        return 0, str(e)
 
 
 def cmd_status(client, guards):
-    tools = {t["name"]: t for t in client.list_tools()}
-    print(f"Available tools ({len(tools)}):")
-    for name in sorted(tools):
-        print(f"  - {name}")
-    # Try common account/positions tools
-    for keywords in (["account"], ["position"], ["portfolio"], ["balance"]):
-        tool_name = find_tool(client, keywords)
-        if tool_name:
+    tools = client.list_tools()
+    print(f"\nMCP tools available ({len(tools)}):")
+    for t in sorted(tools, key=lambda x: x.get("name", "")):
+        desc = (t.get("description") or "")[:80]
+        print(f"  {t['name']:40s} {desc}")
+    # Account snapshot via common tool names
+    for kw in (["account"], ["portfolio"], ["position"], ["balance"]):
+        name = client.find_tool(*kw)
+        if name and "quote" not in name:
             try:
-                result = client.call_tool(tool_name, {})
-                print(f"\n== {tool_name} ==\n{json.dumps(result, indent=2)[:2000]}")
+                r = client.call_tool(name, {})
+                print(f"\n== {name} ==\n{json.dumps(r, indent=2)[:1500]}")
             except MCPError as e:
-                print(f"{tool_name} failed: {e}")
+                print(f"  ({name}: {e})")
 
 
-def cmd_quote(client, guards, symbol):
-    tool_name = find_tool(client, ["quote"]) or find_tool(client, ["price"])
-    if not tool_name:
-        print("No quote tool found on server.")
-        return
-    try:
-        result = client.call_tool(tool_name, {"symbol": symbol.upper()})
-        print(json.dumps(result, indent=2)[:2000])
-    except MCPError as e:
-        print(f"Quote failed: {e}")
-
-
-def cmd_trade(client, guards, side, symbol, quantity):
+def cmd_trade(client, guards, side, symbol, qty_str, paper=False):
     symbol = symbol.upper()
     try:
-        quantity = float(quantity)
+        qty = float(qty_str)
     except ValueError:
         print("Quantity must be a number.")
         return
 
-    # Get current price for guardrail notional check
-    quote_tool = find_tool(client, ["quote"]) or find_tool(client, ["price"])
-    price = 0
-    if quote_tool:
-        try:
-            q = client.call_tool(quote_tool, {"symbol": symbol})
-            # Try common price fields
-            content = json.dumps(q)
-            import re
-            m = re.search(r'"(?:last|price|mark)[^"]*":\s*([\d.]+)', content)
-            if m:
-                price = float(m.group(1))
-        except MCPError:
-            pass
+    price, err = get_price(client, symbol)
     if price <= 0:
-        print("Could not get price — refusing to trade blind.")
-        guards.log(f"REFUSED {side} {quantity} {symbol}: no price available")
+        msg = f"REFUSED {side} {qty} {symbol}: no price ({err})"
+        print(msg)
+        guards.log(msg)
         return
 
-    allowed, reason = guards.check(symbol, side, quantity, price)
+    allowed, reason = guards.check(symbol, side, qty, price)
     if not allowed:
-        print(f"Blocked by guardrails: {reason}")
-        guards.log(f"BLOCKED {side} {quantity} {symbol} @ {price}: {reason}")
+        msg = f"BLOCKED {side} {qty} {symbol} @ ${price:.2f}: {reason}"
+        print(msg)
+        guards.log(msg)
         return
 
-    order_tool = find_tool(client, ["order"]) or find_tool(client, ["trade"]) or find_tool(client, [side])
+    notional = qty * price
+    mode = "PAPER" if (paper or guards.config["paper_trading"]) else "LIVE"
+    print(f"\n[{mode}] {side.upper()} {qty} {symbol} @ ~${price:.2f} = ${notional:.2f}")
+
+    if guards.config["require_approval"]:
+        ans = input("Approve? [y/N] ").strip().lower()
+        if ans != "y":
+            print("Cancelled.")
+            guards.log(f"CANCELLED {side} {qty} {symbol} (user declined)")
+            return
+
+    is_paper = paper or guards.config["paper_trading"]
+    if is_paper:
+        # Simulate: assume fill at quoted price
+        order_id = f"paper-{int(__import__('time').time())}"
+        guards.record_trade(symbol, side, qty, price, order_id=order_id, paper=True)
+        guards.log(f"PAPER {side} {qty} {symbol} @ ${price:.2f} (simulated fill)")
+        print(f"Paper trade recorded (simulated fill @ ${price:.2f}). No real order sent.")
+        return
+
+    order_tool = (client.find_tool("order") or client.find_tool("trade")
+                  or client.find_tool(side))
     if not order_tool:
         print("No order tool found on server.")
         return
-
-    print(f"\nProposed: {side.upper()} {quantity} {symbol} @ ~${price:.2f} = ${quantity*price:.2f}")
-    if guards.config["require_approval"]:
-        answer = input("Approve? [y/N] ").strip().lower()
-        if answer != "y":
-            print("Cancelled.")
-            guards.log(f"CANCELLED {side} {quantity} {symbol} (user declined)")
-            return
-
     try:
         result = client.call_tool(order_tool, {
-            "symbol": symbol, "side": side.lower(), "quantity": quantity,
+            "symbol": symbol, "side": side.lower(), "quantity": qty,
+            "type": "market", "time_in_force": "day",
         })
-        print(f"Order result:\n{json.dumps(result, indent=2)[:2000]}")
-        guards.record_trade(symbol, side, quantity, price)
-        guards.log(f"EXECUTED {side} {quantity} {symbol} @ {price}")
+        print(f"Order result:\n{json.dumps(result, indent=2)[:1500]}")
+        order_id = extract_order_id(result)
+        guards.record_trade(symbol, side, qty, price, order_id=order_id)
+        guards.log(f"LIVE {side} {qty} {symbol} @ ${price:.2f} order_id={order_id}")
     except MCPError as e:
         print(f"Order failed: {e}")
-        guards.log(f"FAILED {side} {quantity} {symbol}: {e}")
+        guards.log(f"FAILED {side} {qty} {symbol}: {e}")
+
+
+def extract_order_id(result):
+    text = json.dumps(result)
+    m = re.search(r'"(?:order_?id|id|ref_?id)"\s*:\s*"([^"]+)"', text)
+    return m.group(1) if m else None
+
+
+def cmd_journal(guards):
+    s = guards.daily_summary()
+    print(f"\nToday's journal:")
+    print(f"  Trades: {s['trades']} (paper: {s['paper_trades']}, live: {s['live_trades']})")
+    print(f"  Realized P&L: ${s['realized_pnl']:.2f}")
+    for t in guards._trades_today:
+        if t["date"] == __import__("datetime").date.today().isoformat():
+            flag = "PAPER" if t.get("paper") else "LIVE"
+            print(f"  [{flag}] {t['time'][11:19]} {t['side'].upper()} {t['quantity']} "
+                  f"{t['symbol']} @ ${t['price']:.2f}")
 
 
 def main():
@@ -134,14 +173,27 @@ def main():
         print(__doc__)
         sys.exit(0)
     guards = Guardrails()
-    client = get_client()
     cmd = sys.argv[1].lower()
+
+    if cmd == "journal":
+        cmd_journal(guards)
+        return
+    if cmd == "tools":
+        client = get_client()
+        for t in sorted(client.list_tools(), key=lambda x: x.get("name", "")):
+            print(f"{t['name']}: {(t.get('description') or '')[:100]}")
+        return
+
+    client = get_client()
     if cmd == "status":
         cmd_status(client, guards)
     elif cmd == "quote" and len(sys.argv) > 2:
-        cmd_quote(client, guards, sys.argv[2])
+        price, err = get_price(client, sys.argv[2])
+        print(f"{sys.argv[2].upper()}: ${price:.2f}" if price > 0 else f"Quote failed: {err}")
     elif cmd in ("buy", "sell") and len(sys.argv) > 3:
         cmd_trade(client, guards, cmd, sys.argv[2], sys.argv[3])
+    elif cmd == "paper" and len(sys.argv) > 3:
+        cmd_trade(client, guards, "buy", sys.argv[2], sys.argv[3], paper=True)
     else:
         print(__doc__)
 

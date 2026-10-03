@@ -1,37 +1,59 @@
 """
-Safety guardrails for the Robinhood trading agent.
-Every trade goes through these checks. No exceptions.
+Safety guardrails for the Robinhood trading agent — hardened.
+
+Layers:
+  1. Kill switch (trading_enabled) — default OFF
+  2. Paper trading mode — simulate without real orders
+  3. Symbol allow/blocklists
+  4. Buy-only mode
+  5. Per-position notional cap
+  6. Daily trade count cap
+  7. Daily loss halt
+  8. Per-trade approval (default ON)
+  9. Cooldown between trades on the same symbol
+  10. Full audit log of every decision
 """
 import json
 import os
+import time
 from datetime import date, datetime
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "guardrails.json")
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guardrails.json")
 
 DEFAULTS = {
-    "max_position_usd": 100.0,       # max dollars in any single position
-    "max_daily_loss_usd": 50.0,      # halt trading if daily loss exceeds this
-    "max_daily_trades": 10,          # max trades per day
-    "require_approval": True,        # require human approval per trade
-    "allowed_symbols": [],           # empty = any symbol allowed; else allowlist
-    "blocked_symbols": [],           # never trade these
     "trading_enabled": False,        # master kill switch — default OFF
-    "buy_only": False,               # if True, reject all sells/shorts
+    "paper_trading": True,           # simulate orders, never send real ones
+    "require_approval": True,        # ask before every trade
+    "max_position_usd": 100.0,
+    "max_daily_loss_usd": 50.0,
+    "max_daily_trades": 10,
+    "min_seconds_between_trades": 60,  # cooldown per symbol
+    "buy_only": False,
+    "allowed_symbols": [],           # empty = all allowed
+    "blocked_symbols": [],
 }
 
 
 class Guardrails:
     def __init__(self, path=CONFIG_PATH):
         self.path = path
+        self.base_dir = os.path.dirname(os.path.abspath(path))
         self.config = dict(DEFAULTS)
         if os.path.exists(path):
             with open(path) as f:
-                self.config.update(json.load(f))
+                loaded = json.load(f)
+            # Only accept known keys — typo'd keys fail loudly
+            unknown = set(loaded) - set(DEFAULTS)
+            if unknown:
+                raise ValueError(f"Unknown guardrail keys: {unknown}. Check {path}")
+            self.config.update(loaded)
         self._trades_today = []
+        self._last_trade_time = {}
         self._load_state()
 
+    # ---- persistence ----
     def _state_path(self):
-        return os.path.join(os.path.dirname(self.path), ".agent_state.json")
+        return os.path.join(self.base_dir, ".agent_state.json")
 
     def _load_state(self):
         try:
@@ -39,51 +61,95 @@ class Guardrails:
                 state = json.load(f)
             if state.get("date") == str(date.today()):
                 self._trades_today = state.get("trades", [])
+                self._last_trade_time = state.get("last_trade_time", {})
         except (FileNotFoundError, json.JSONDecodeError):
             pass
 
     def _save_state(self):
-        with open(self._state_path(), "w") as f:
-            json.dump({"date": str(date.today()), "trades": self._trades_today}, f)
+        tmp = self._state_path() + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({
+                "date": str(date.today()),
+                "trades": self._trades_today,
+                "last_trade_time": self._last_trade_time,
+            }, f)
+        os.replace(tmp, self._state_path())  # atomic
 
     def save(self):
         with open(self.path, "w") as f:
             json.dump(self.config, f, indent=2)
 
+    # ---- checks ----
     def check(self, symbol, side, quantity, price):
-        """Returns (allowed: bool, reason: str)."""
+        """Returns (allowed: bool, reason: str). Pure — no side effects."""
         cfg = self.config
+        symbol = symbol.upper()
+
         if not cfg["trading_enabled"]:
-            return False, "Kill switch is OFF — trading disabled."
-        if cfg["blocked_symbols"] and symbol.upper() in [s.upper() for s in cfg["blocked_symbols"]]:
-            return False, f"{symbol} is on the blocklist."
-        if cfg["allowed_symbols"] and symbol.upper() not in [s.upper() for s in cfg["allowed_symbols"]]:
-            return False, f"{symbol} is not on the allowlist."
+            return False, "Kill switch is OFF."
+        if quantity <= 0:
+            return False, f"Invalid quantity {quantity}."
+        if price <= 0:
+            return False, "No valid price — refusing to trade blind."
+        if symbol in [s.upper() for s in cfg["blocked_symbols"]]:
+            return False, f"{symbol} is blocklisted."
+        if cfg["allowed_symbols"] and symbol not in [s.upper() for s in cfg["allowed_symbols"]]:
+            return False, f"{symbol} not on allowlist."
         if cfg["buy_only"] and side.lower() in ("sell", "short"):
             return False, "Buy-only mode — sells rejected."
+
         notional = quantity * price
         if notional > cfg["max_position_usd"]:
             return False, f"${notional:.2f} exceeds max position ${cfg['max_position_usd']:.2f}."
-        today_trades = [t for t in self._trades_today if t["date"] == str(date.today())]
-        if len(today_trades) >= cfg["max_daily_trades"]:
+
+        today = str(date.today())
+        todays = [t for t in self._trades_today if t["date"] == today]
+        if len(todays) >= cfg["max_daily_trades"]:
             return False, f"Daily trade limit ({cfg['max_daily_trades']}) reached."
-        daily_pnl = sum(t.get("pnl", 0) for t in today_trades)
-        if daily_pnl < -cfg["max_daily_loss_usd"]:
-            return False, f"Daily loss limit hit (${daily_pnl:.2f}). Trading halted today."
+
+        daily_pnl = sum(t.get("pnl", 0) for t in todays)
+        if daily_pnl <= -cfg["max_daily_loss_usd"]:
+            return False, f"Daily loss limit hit (${daily_pnl:.2f}). Halted for today."
+
+        last = self._last_trade_time.get(symbol, 0)
+        cooldown = cfg["min_seconds_between_trades"]
+        if time.time() - last < cooldown:
+            wait = int(cooldown - (time.time() - last))
+            return False, f"Cooldown: wait {wait}s before trading {symbol} again."
+
         return True, "OK"
 
-    def record_trade(self, symbol, side, quantity, price, order_id=None):
+    def record_trade(self, symbol, side, quantity, price, order_id=None, paper=False):
+        symbol = symbol.upper()
         self._trades_today.append({
             "date": str(date.today()),
             "time": datetime.now().isoformat(),
             "symbol": symbol, "side": side,
             "quantity": quantity, "price": price,
             "order_id": order_id, "pnl": 0,
+            "paper": paper,
         })
+        self._last_trade_time[symbol] = time.time()
         self._save_state()
+
+    def record_pnl(self, pnl):
+        """Attach realized P&L to the most recent trade (for daily loss tracking)."""
+        if self._trades_today:
+            self._trades_today[-1]["pnl"] = pnl
+            self._save_state()
+
+    def daily_summary(self):
+        today = str(date.today())
+        todays = [t for t in self._trades_today if t["date"] == today]
+        return {
+            "trades": len(todays),
+            "realized_pnl": round(sum(t.get("pnl", 0) for t in todays), 2),
+            "paper_trades": sum(1 for t in todays if t.get("paper")),
+            "live_trades": sum(1 for t in todays if not t.get("paper")),
+        }
 
     def log(self, message):
         line = f"{datetime.now().isoformat()} {message}\n"
-        with open(os.path.join(os.path.dirname(self.path), "agent.log"), "a") as f:
+        with open(os.path.join(self.base_dir, "agent.log"), "a") as f:
             f.write(line)
         print(line.strip())

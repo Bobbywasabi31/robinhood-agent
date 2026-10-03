@@ -4,3 +4,4 @@ agent.log
 __pycache__/
 *.pyc
 .env
+tests/__pycache__/
