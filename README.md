@@ -35,11 +35,28 @@ Edit `guardrails.json` (created on first run from defaults). **`trading_enabled`
 
 ### 4. Run
 ```bash
-python3 agent.py status          # list tools, account, positions
-python3 agent.py quote AAPL      # get a quote
-python3 agent.py buy AAPL 10     # buy 10 shares (asks for approval)
-python3 agent.py sell AAPL 5     # sell 5 shares
+python3 agent.py status              # list tools, account, positions
+python3 agent.py quote LIN           # get a quote
+python3 agent.py buy LIN 10 520 470  # buy 10, target $520, stop $470 (writes thesis, asks approval)
+python3 agent.py paper LIN 10        # simulate without touching the API
+python3 agent.py journal             # today's trades + P&L
 ```
+
+## Investment thesis (one page per trade)
+
+Every proposed trade generates a **written essay on risk and reward** before
+execution: the setup, bull case, bear case, explicit risk/reward ratio, why
+now, position sizing, what would invalidate the thesis, and a verdict.
+
+- **JUSTIFIED** requires target + stop defined and ratio ≥ 2:1.
+- A trade without a written edge is a gamble — the thesis says so explicitly.
+- Each thesis is saved to `theses/` as a permanent audit trail.
+
+## Trading universe
+
+Restricted to **S&P 500** constituents (503 names, `universe.json`), with the
+25 Materials names flagged (LIN, SHW, APD, ECL, FCX, NEM, …). Set via the
+`universe` key in guardrails.json: `sp500` | `materials` | `sp500+materials` | `any`.
 
 ## Safety design
 
