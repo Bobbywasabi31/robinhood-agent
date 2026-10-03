@@ -5,8 +5,8 @@ Robinhood Agentic Trading agent — hardened.
 Commands:
   status              Account, positions, available tools
   quote SYMBOL        Current quote
-  buy SYMBOL QTY      Buy (guardrails + approval)
-  sell SYMBOL QTY     Sell (guardrails + approval)
+  buy SYMBOL QTY [TARGET] [STOP]   Buy (thesis + guardrails + approval)
+  sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
   tools               List raw MCP tools from the server
@@ -21,7 +21,8 @@ import re
 import sys
 
 from mcp_client import RobinhoodMCPClient, MCPError, MCPAuthError
-from guardrails import Guardrails
+from guardrails import Guardrails, load_universe
+from thesis import build_thesis, save_thesis
 
 
 def get_client():
@@ -89,7 +90,21 @@ def cmd_status(client, guards):
                 print(f"  ({name}: {e})")
 
 
-def cmd_trade(client, guards, side, symbol, qty_str, paper=False):
+def get_sector(symbol):
+    """Look up GICS sector from the universe file."""
+    uni = load_universe()
+    for s in uni.get("sp500", []):
+        if s.upper() == symbol.upper():
+            break
+    # sector lookup from universe entries if available
+    for entry in uni.get("entries", []):
+        if entry.get("symbol", "").upper() == symbol.upper():
+            return entry.get("sector", "Unknown")
+    return "Unknown"
+
+
+def cmd_trade(client, guards, side, symbol, qty_str, paper=False,
+              target=None, stop=None):
     symbol = symbol.upper()
     try:
         qty = float(qty_str)
@@ -111,12 +126,52 @@ def cmd_trade(client, guards, side, symbol, qty_str, paper=False):
         guards.log(msg)
         return
 
+    # --- Investment thesis: one page on risk and reward ---
+    if target is None:
+        try:
+            target = float(input("Bull-case target price (or Enter to skip): ").strip() or 0) or None
+        except ValueError:
+            target = None
+    if stop is None:
+        try:
+            stop = float(input("Stop-loss price (or Enter to skip): ").strip() or 0) or None
+        except ValueError:
+            stop = None
+
+    uni = load_universe()
+    universe_note = ""
+    if symbol in [s.upper() for s in uni.get("materials", [])]:
+        universe_note = "S&P 500 Materials"
+    elif symbol in [s.upper() for s in uni.get("sp500", [])]:
+        universe_note = "S&P 500"
+
+    thesis_text, verdict = build_thesis(symbol, side, qty, price, {
+        "sector": get_sector(symbol),
+        "reason": "Manual trade request via agent CLI",
+        "target_price": target,
+        "stop_price": stop,
+        "universe_note": universe_note,
+    })
+    thesis_path = save_thesis(symbol, side, thesis_text)
+
+    print()
+    print(thesis_text)
+    print()
+    print(f"Thesis saved to {thesis_path}")
+    guards.log(f"THESIS {side} {qty} {symbol}: justified={verdict['justified']} "
+               f"ratio={verdict['risk_reward_ratio']} -> {thesis_path}")
+
+    if not verdict["justified"]:
+        print()
+        print("!! Thesis is NOT justified (missing target/stop or ratio < 2:1).")
+        print("   Fix the thesis before trading real money.")
+
     notional = qty * price
     mode = "PAPER" if (paper or guards.config["paper_trading"]) else "LIVE"
     print(f"\n[{mode}] {side.upper()} {qty} {symbol} @ ~${price:.2f} = ${notional:.2f}")
 
     if guards.config["require_approval"]:
-        ans = input("Approve? [y/N] ").strip().lower()
+        ans = input("Approve? (you have read the thesis above) [y/N] ").strip().lower()
         if ans != "y":
             print("Cancelled.")
             guards.log(f"CANCELLED {side} {qty} {symbol} (user declined)")
@@ -191,9 +246,15 @@ def main():
         price, err = get_price(client, sys.argv[2])
         print(f"{sys.argv[2].upper()}: ${price:.2f}" if price > 0 else f"Quote failed: {err}")
     elif cmd in ("buy", "sell") and len(sys.argv) > 3:
-        cmd_trade(client, guards, cmd, sys.argv[2], sys.argv[3])
+        target = float(sys.argv[4]) if len(sys.argv) > 4 else None
+        stop = float(sys.argv[5]) if len(sys.argv) > 5 else None
+        cmd_trade(client, guards, cmd, sys.argv[2], sys.argv[3],
+                  target=target, stop=stop)
     elif cmd == "paper" and len(sys.argv) > 3:
-        cmd_trade(client, guards, "buy", sys.argv[2], sys.argv[3], paper=True)
+        target = float(sys.argv[4]) if len(sys.argv) > 4 else None
+        stop = float(sys.argv[5]) if len(sys.argv) > 5 else None
+        cmd_trade(client, guards, "buy", sys.argv[2], sys.argv[3],
+                  paper=True, target=target, stop=stop)
     else:
         print(__doc__)
 
