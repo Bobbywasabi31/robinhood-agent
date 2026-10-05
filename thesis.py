@@ -13,7 +13,6 @@ Every proposed trade gets a written thesis BEFORE execution:
 
 Theses are saved to theses/ as markdown — a permanent audit trail.
 """
-import json
 import os
 from datetime import datetime
 
@@ -133,7 +132,7 @@ def build_thesis(symbol, side, quantity, price, context):
 
     lines.append("## Verdict")
     if justified:
-        lines.append(f"- **JUSTIFIED** — risk/reward ≥ 2:1, stop and target defined.")
+        lines.append("- **JUSTIFIED** — risk/reward ≥ 2:1, stop and target defined.")
         lines.append(f"- Confidence: {confidence}. Proceed to guardrails + approval.")
     else:
         lines.append("- **NOT JUSTIFIED YET** — missing target, stop, or ratio < 2:1.")

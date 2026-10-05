@@ -49,7 +49,8 @@ def get_client():
 def extract_price(quote_result):
     """Best-effort price extraction from a quote tool result."""
     text = json.dumps(quote_result)
-    for field in ("last_trade_price", "last_price", "mark_price", "ask_price", "bid_price", "price", "last"):
+    for field in ("last_trade_price", "last_price", "mark_price",
+                 "ask_price", "bid_price", "price", "last"):
         m = re.search(rf'"{field}"\s*:\s*"?([\d.]+)"?', text)
         if m:
             try:
@@ -71,6 +72,17 @@ def get_price(client, symbol):
         return price, "" if price > 0 else "could not parse price"
     except MCPError as e:
         return 0, str(e)
+
+
+def parse_optional_float(value, name):
+    """Parse an optional CLI price arg; warn and skip on garbage input."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        print(f"Ignoring invalid {name} price: {value!r}")
+        return None
 
 
 def cmd_status(client, guards):
@@ -129,7 +141,9 @@ def cmd_trade(client, guards, side, symbol, qty_str, paper=False,
     # --- Investment thesis: one page on risk and reward ---
     if target is None:
         try:
-            target = float(input("Bull-case target price (or Enter to skip): ").strip() or 0) or None
+            target = float(
+                input("Bull-case target price (or Enter to skip): ").strip() or 0
+            ) or None
         except ValueError:
             target = None
     if stop is None:
@@ -213,7 +227,7 @@ def extract_order_id(result):
 
 def cmd_journal(guards):
     s = guards.daily_summary()
-    print(f"\nToday's journal:")
+    print("\nToday's journal:")
     print(f"  Trades: {s['trades']} (paper: {s['paper_trades']}, live: {s['live_trades']})")
     print(f"  Realized P&L: ${s['realized_pnl']:.2f}")
     for t in guards._trades_today:
@@ -246,13 +260,13 @@ def main():
         price, err = get_price(client, sys.argv[2])
         print(f"{sys.argv[2].upper()}: ${price:.2f}" if price > 0 else f"Quote failed: {err}")
     elif cmd in ("buy", "sell") and len(sys.argv) > 3:
-        target = float(sys.argv[4]) if len(sys.argv) > 4 else None
-        stop = float(sys.argv[5]) if len(sys.argv) > 5 else None
+        target = parse_optional_float(sys.argv[4] if len(sys.argv) > 4 else None, "target")
+        stop = parse_optional_float(sys.argv[5] if len(sys.argv) > 5 else None, "stop")
         cmd_trade(client, guards, cmd, sys.argv[2], sys.argv[3],
                   target=target, stop=stop)
     elif cmd == "paper" and len(sys.argv) > 3:
-        target = float(sys.argv[4]) if len(sys.argv) > 4 else None
-        stop = float(sys.argv[5]) if len(sys.argv) > 5 else None
+        target = parse_optional_float(sys.argv[4] if len(sys.argv) > 4 else None, "target")
+        stop = parse_optional_float(sys.argv[5] if len(sys.argv) > 5 else None, "stop")
         cmd_trade(client, guards, "buy", sys.argv[2], sys.argv[3],
                   paper=True, target=target, stop=stop)
     else:

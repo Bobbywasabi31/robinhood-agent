@@ -8,6 +8,7 @@ MCP client for Robinhood Agentic Trading — hardened.
 - Detailed error classification (auth vs. transient vs. fatal)
 """
 import json
+import sys
 import time
 import uuid
 import urllib.request
@@ -74,7 +75,10 @@ class RobinhoodMCPClient:
         except urllib.error.HTTPError as e:
             body = e.read().decode()[:500]
             if e.code in (401, 403):
-                raise MCPAuthError(f"Auth failed (HTTP {e.code}). Token expired or invalid. Re-authenticate. Body: {body}")
+                raise MCPAuthError(
+                    f"Auth failed (HTTP {e.code}). Token expired or invalid. "
+                    f"Re-authenticate. Body: {body}"
+                )
             if 500 <= e.code < 600:
                 raise MCPTransientError(f"Server error HTTP {e.code}: {body}")
             raise MCPFatalError(f"HTTP {e.code}: {body}")
@@ -136,6 +140,13 @@ class RobinhoodMCPClient:
         })
         # Verify protocol compatibility
         server_version = (result or {}).get("protocolVersion", "")
+        if server_version and server_version != PROTOCOL_VERSION:
+            print(
+                f"Warning: server protocol version {server_version} "
+                f"differs from client {PROTOCOL_VERSION}. "
+                "Some calls may fail.",
+                file=sys.stderr,
+            )
         self.server_info = (result or {}).get("serverInfo", {})
         # Per spec, send initialized notification (no response expected)
         try:

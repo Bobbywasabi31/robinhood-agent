@@ -148,6 +148,18 @@ def test_universe_any():
     allowed, _ = g.check("GME", "buy", 1, 10)
     assert allowed is True
 
+
+def test_universe_fail_closed_when_data_missing():
+    import guardrails as gmod
+    orig = gmod.load_universe
+    gmod.load_universe = lambda: {"sp500": [], "materials": []}
+    try:
+        g = make_guards(universe="sp500")
+        allowed, reason = g.check("AAPL", "buy", 1, 10)
+        assert allowed is False and "Universe data unavailable" in reason
+    finally:
+        gmod.load_universe = orig
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

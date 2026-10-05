@@ -10,8 +10,6 @@ Robinhood's flow (per their docs):
 This script walks you through it step by step and never writes
 tokens to disk — it prints the export command for you to run.
 """
-import sys
-import webbrowser
 
 MCP_ENDPOINT = "https://agent.robinhood.com/mcp/trading"
 

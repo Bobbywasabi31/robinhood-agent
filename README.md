@@ -16,6 +16,8 @@ An AI trading agent for **Robinhood Agentic Trading** — Robinhood's official p
 - A U.S. Robinhood individual account in good standing
 - Eligibility for Agentic Trading (rolling out in beta — Robinhood emails eligible users)
 - Initial setup is **desktop-only** per Robinhood's docs
+- Your main brokerage (e.g. Schwab) is never touched — the agent can only ever
+  reach the dedicated Agentic Trading account you fund explicitly
 - Python 3.8+
 
 ## Setup
@@ -31,7 +33,7 @@ The MCP server uses OAuth 2.1:
 Tokens are never written to disk by this agent — only the env var.
 
 ### 3. Configure guardrails
-Edit `guardrails.json` (created on first run from defaults). **`trading_enabled` defaults to `false`** — nothing trades until you flip it on.
+Edit `guardrails.json` (created on first run from defaults). **`trading_enabled` defaults to `false`** — nothing trades until you flip it on. **`paper_trading` defaults to `true`** — orders are simulated until you explicitly turn paper mode off.
 
 ### 4. Run
 ```bash

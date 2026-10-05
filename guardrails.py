@@ -118,7 +118,14 @@ class Guardrails:
                 allowed.update(s.upper() for s in uni.get("sp500", []))
             if "materials" in universe_mode:
                 allowed.update(s.upper() for s in uni.get("materials", []))
-            if allowed and symbol not in allowed:
+            if not allowed:
+                # Fail closed: a missing/corrupt universe file must not
+                # silently lift the universe restriction.
+                return False, (
+                    f"Universe data unavailable ({universe_mode}) — "
+                    "refusing to trade."
+                )
+            if symbol not in allowed:
                 return False, f"{symbol} not in {universe_mode} universe."
 
         notional = quantity * price
