@@ -1,7 +1,7 @@
 {
  "description": "S&P 500 constituents with GICS sectors",
- "updated": "2026-10-03",
- "source": "Wikipedia List of S&P 500 companies",
+ "updated": "2026-10-07",
+ "source": "S&P Dow Jones Indices announcements (PR Newswire 2026-10-01; effective Oct 1 & Oct 6, 2026)",
  "sp500": [
   "A",
   "AAPL",
@@ -124,7 +124,6 @@
   "CSX",
   "CTAS",
   "CTSH",
-  "CTVA",
   "CVNA",
   "CVS",
   "CVX",
@@ -453,6 +452,7 @@
   "TSN",
   "TT",
   "TTWO",
+  "TWLO",
   "TXN",
   "TXT",
   "TYL",
@@ -480,10 +480,10 @@
   "VST",
   "VTR",
   "VTRS",
+  "VYLR",
   "VZ",
   "WAB",
   "WAT",
-  "WBD",
   "WDAY",
   "WDC",
   "WEC",
@@ -515,7 +515,6 @@
   "BALL",
   "CF",
   "CRH",
-  "CTVA",
   "DOW",
   "ECL",
   "FCX",
@@ -1018,10 +1017,6 @@
   {
    "symbol": "CTSH",
    "sector": "Information Technology"
-  },
-  {
-   "symbol": "CTVA",
-   "sector": "Materials"
   },
   {
    "symbol": "CVNA",
@@ -2336,6 +2331,10 @@
    "sector": "Communication Services"
   },
   {
+   "symbol": "TWLO",
+   "sector": "Information Technology"
+  },
+  {
    "symbol": "TXN",
    "sector": "Information Technology"
   },
@@ -2444,6 +2443,10 @@
    "sector": "Health Care"
   },
   {
+   "symbol": "VYLR",
+   "sector": "Consumer Staples"
+  },
+  {
    "symbol": "VZ",
    "sector": "Communication Services"
   },
@@ -2454,10 +2457,6 @@
   {
    "symbol": "WAT",
    "sector": "Health Care"
-  },
-  {
-   "symbol": "WBD",
-   "sector": "Communication Services"
   },
   {
    "symbol": "WDAY",
