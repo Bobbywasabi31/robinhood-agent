@@ -9,6 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
+  stats               Paper-journal stats: win rate, avg win/loss, exposure, drawdown
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -225,6 +226,19 @@ def extract_order_id(result):
     return m.group(1) if m else None
 
 
+def cmd_stats(guards):
+    """Read-only paper-journal stats. Never touches the API or trading logic."""
+    from paper_stats import compute_stats, format_report, load_journal
+    trades = load_journal(os.path.join(guards.base_dir, ".agent_state.json"))
+    paper = [t for t in trades if t.get("paper")]
+    live = [t for t in trades if not t.get("paper")]
+    print(format_report(compute_stats(paper)))
+    if live:
+        print(f"({len(live)} live trade(s) in the journal — excluded from paper stats.)")
+    if not paper:
+        print("No paper trades in the journal yet.")
+
+
 def cmd_journal(guards):
     s = guards.daily_summary()
     print("\nToday's journal:")
@@ -246,6 +260,9 @@ def main():
 
     if cmd == "journal":
         cmd_journal(guards)
+        return
+    if cmd == "stats":
+        cmd_stats(guards)
         return
     if cmd == "tools":
         client = get_client()
