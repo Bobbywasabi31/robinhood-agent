@@ -163,3 +163,30 @@ def test_merge_trades_dedupes_journal_and_state_overlap():
 def test_merge_trades_empty():
     assert merge_trades() == []
     assert merge_trades([], []) == []
+
+
+def test_by_symbol_breakdown():
+    s = compute_stats(FIXTURE)
+    by = s["by_symbol"]
+    # AAPL round trip: +10 then -5 -> net +5, 1W/1L.
+    assert by["AAPL"] == {"trades": 2, "realized": 2, "wins": 1, "losses": 1, "pnl": 5.0}
+    # MSFT still open: pnl 0, no realized trades.
+    assert by["MSFT"] == {"trades": 1, "realized": 0, "wins": 0, "losses": 0, "pnl": 0.0}
+
+
+def test_by_symbol_empty_trades():
+    assert compute_stats([])["by_symbol"] == {}
+
+
+def test_format_report_includes_per_symbol():
+    s = compute_stats(FIXTURE)
+    report = format_report(s)
+    assert "Per-symbol P&L:" in report
+    assert "AAPL: $5.00 over 2 trades (1W/1L)" in report
+    assert "MSFT: $0.00 over 1 trades (0W/0L)" in report
+
+
+def test_by_symbol_unknown_symbol_fallback():
+    t = trade("2026-10-09T11:00:00", "", "buy", 1, 100.0, 7.0)
+    s = compute_stats([t])
+    assert s["by_symbol"]["UNKNOWN"]["pnl"] == 7.0

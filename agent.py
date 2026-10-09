@@ -9,7 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats               Paper-journal stats: win rate, avg win/loss, exposure, drawdown
+  stats               Paper-journal stats: win rate, avg win/loss, per-symbol P&L, exposure, drawdown
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."

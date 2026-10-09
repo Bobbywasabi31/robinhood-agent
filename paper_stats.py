@@ -95,6 +95,22 @@ def compute_stats(trades):
     wins = [p for p in realized if p > 0]
     losses = [p for p in realized if p < 0]
 
+    # Per-symbol realized P&L (win/loss counts per ticker).
+    by_symbol = {}
+    for t in trades:
+        sym = (t.get("symbol") or "UNKNOWN").upper()
+        row = by_symbol.setdefault(
+            sym, {"trades": 0, "realized": 0, "wins": 0, "losses": 0, "pnl": 0.0})
+        pnl = t.get("pnl") or 0
+        row["trades"] += 1
+        row["pnl"] = round(row["pnl"] + pnl, 2)
+        if pnl != 0:
+            row["realized"] += 1
+            if pnl > 0:
+                row["wins"] += 1
+            else:
+                row["losses"] += 1
+
     # Open exposure: net quantity per symbol at last traded price.
     net_qty, last_price = {}, {}
     for t in trades:
@@ -134,6 +150,7 @@ def compute_stats(trades):
         ),
         "open_exposure": round(sum(positions.values()), 2),
         "positions": positions,
+        "by_symbol": by_symbol,
         "max_drawdown": round(max_dd, 2),
     }
 
@@ -160,6 +177,12 @@ def format_report(stats):
         f"  Gross notional:     {money(stats['gross_notional'])}",
         f"  Open exposure:      {money(stats['open_exposure'])}",
     ]
+    if stats["by_symbol"]:
+        lines.append("  Per-symbol P&L:")
+        for sym in sorted(stats["by_symbol"]):
+            row = stats["by_symbol"][sym]
+            wl = f"({row['wins']}W/{row['losses']}L)"
+            lines.append(f"    {sym}: {money(row['pnl'])} over {row['trades']} trades {wl}")
     if stats["positions"]:
         lines.append("  Open positions:")
         for sym in sorted(stats["positions"]):
