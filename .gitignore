@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 .env
 tests/__pycache__/
+
+# append-only trade journal (runtime data, like .agent_state.json)
+paper_journal.jsonl
