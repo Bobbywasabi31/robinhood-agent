@@ -190,3 +190,68 @@ def test_by_symbol_unknown_symbol_fallback():
     t = trade("2026-10-09T11:00:00", "", "buy", 1, 100.0, 7.0)
     s = compute_stats([t])
     assert s["by_symbol"]["UNKNOWN"]["pnl"] == 7.0
+
+
+def trade_on(date, time, symbol, side, qty, price, pnl):
+    t = trade(time, symbol, side, qty, price, pnl)
+    t["date"] = date
+    t["order_id"] = f"paper-{date}-{time}"
+    return t
+
+
+def test_multiday_journal_orders_by_date_then_time():
+    # A morning trade on day 2 must NOT sort before an afternoon trade on day 1,
+    # or the cumulative curve (and drawdown) would be wrong.
+    trades = [
+        trade_on("2026-10-09", "2026-10-09T14:00:00", "AAPL", "buy", 1, 200.0, -5.0),
+        trade_on("2026-10-10", "2026-10-10T09:31:00", "AAPL", "sell", 1, 210.0, 10.0),
+    ]
+    s = compute_stats(trades)
+    # Cumulative: -5, 5 -> peak 0... actually peak 0, trough -5, then 5.
+    # peak tracks max cumulative: 0 then 5. max_dd = 0 - (-5) = 5.
+    assert s["max_drawdown"] == 5.0
+    assert s["total_pnl"] == 5.0
+
+
+def test_multiday_drawdown_uncorrected_sort_would_fail():
+    # With the old time-only sort, 09:31 < 14:00 would invert the days and
+    # hide this drawdown. This trade ordering must reflect calendar order.
+    trades = [
+        trade_on("2026-10-08", "2026-10-08T15:00:00", "MSFT", "buy", 1, 400.0, 20.0),
+        trade_on("2026-10-09", "2026-10-09T10:00:00", "MSFT", "sell", 1, 420.0, -12.0),
+        trade_on("2026-10-09", "2026-10-09T11:00:00", "MSFT", "buy", 1, 408.0, 3.0),
+    ]
+    s = compute_stats(trades)
+    # Cumulative: 20, 8, 11 -> peak 20, trough 8 -> drawdown 12.
+    assert s["max_drawdown"] == 12.0
+
+
+def test_by_day_groups_pnl_per_calendar_day():
+    trades = [
+        trade_on("2026-10-09", "2026-10-09T14:00:00", "AAPL", "buy", 1, 200.0, -5.0),
+        trade_on("2026-10-09", "2026-10-09T15:00:00", "AAPL", "sell", 1, 210.0, 8.0),
+        trade_on("2026-10-10", "2026-10-10T09:31:00", "AAPL", "buy", 1, 205.0, 4.0),
+    ]
+    s = compute_stats(trades)
+    by = s["by_day"]
+    assert by["2026-10-09"] == {"trades": 2, "pnl": 3.0, "wins": 1, "losses": 1}
+    assert by["2026-10-10"] == {"trades": 1, "pnl": 4.0, "wins": 1, "losses": 0}
+
+
+def test_by_day_empty_and_undated():
+    assert compute_stats([])["by_day"] == {}
+    t = trade("2026-10-09T10:00:00", "MSFT", "buy", 1, 400.0, 7.0)
+    del t["date"]
+    s = compute_stats([t])
+    assert s["by_day"]["undated"] == {"trades": 1, "pnl": 7.0, "wins": 1, "losses": 0}
+
+
+def test_format_report_includes_daily_pnl():
+    trades = [
+        trade_on("2026-10-09", "2026-10-09T14:00:00", "AAPL", "buy", 1, 200.0, -5.0),
+        trade_on("2026-10-10", "2026-10-10T09:31:00", "AAPL", "buy", 1, 205.0, 4.0),
+    ]
+    report = format_report(compute_stats(trades))
+    assert "Daily P&L:" in report
+    assert "2026-10-09: $-5.00 over 1 trades (0W/1L)" in report
+    assert "2026-10-10: $4.00 over 1 trades (1W/0L)" in report

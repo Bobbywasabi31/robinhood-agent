@@ -87,13 +87,28 @@ def merge_trades(*trade_lists):
 
 def compute_stats(trades):
     """Crunch a trade list into a stats dict. Pure — no I/O."""
-    trades = sorted(trades, key=lambda t: t.get("time") or "")
+    # Sort by (date, time): time alone is wrong once the journal spans days.
+    trades = sorted(trades, key=lambda t: (t.get("date") or "", t.get("time") or ""))
     n = len(trades)
 
     pnl_values = [t.get("pnl") or 0 for t in trades]
     realized = [p for p in pnl_values if p != 0]
     wins = [p for p in realized if p > 0]
     losses = [p for p in realized if p < 0]
+
+    # Per-day realized P&L (the append-only journal spans days).
+    by_day = {}
+    for t in trades:
+        day = t.get("date") or "undated"
+        pnl = t.get("pnl") or 0
+        row = by_day.setdefault(
+            day, {"trades": 0, "pnl": 0.0, "wins": 0, "losses": 0})
+        row["trades"] += 1
+        row["pnl"] = round(row["pnl"] + pnl, 2)
+        if pnl > 0:
+            row["wins"] += 1
+        elif pnl < 0:
+            row["losses"] += 1
 
     # Per-symbol realized P&L (win/loss counts per ticker).
     by_symbol = {}
@@ -151,6 +166,7 @@ def compute_stats(trades):
         "open_exposure": round(sum(positions.values()), 2),
         "positions": positions,
         "by_symbol": by_symbol,
+        "by_day": by_day,
         "max_drawdown": round(max_dd, 2),
     }
 
@@ -177,6 +193,12 @@ def format_report(stats):
         f"  Gross notional:     {money(stats['gross_notional'])}",
         f"  Open exposure:      {money(stats['open_exposure'])}",
     ]
+    if stats["by_day"]:
+        lines.append("  Daily P&L:")
+        for day in sorted(stats["by_day"]):
+            row = stats["by_day"][day]
+            wl = f"({row['wins']}W/{row['losses']}L)"
+            lines.append(f"    {day}: {money(row['pnl'])} over {row['trades']} trades {wl}")
     if stats["by_symbol"]:
         lines.append("  Per-symbol P&L:")
         for sym in sorted(stats["by_symbol"]):
