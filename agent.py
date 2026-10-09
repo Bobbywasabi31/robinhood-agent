@@ -227,9 +227,19 @@ def extract_order_id(result):
 
 
 def cmd_stats(guards):
-    """Read-only paper-journal stats. Never touches the API or trading logic."""
-    from paper_stats import compute_stats, format_report, load_journal
-    trades = load_journal(os.path.join(guards.base_dir, ".agent_state.json"))
+    """Read-only paper-journal stats. Never touches the API or trading logic.
+
+    Merges the append-only journal (long-term history) with today's state file
+    (which rolls daily) so stats survive midnight; duplicates are dropped.
+    """
+    from paper_stats import (
+        compute_stats, default_append_journal_path, format_report,
+        load_append_journal, load_journal, merge_trades,
+    )
+    trades = merge_trades(
+        load_append_journal(default_append_journal_path(guards.base_dir)),
+        load_journal(os.path.join(guards.base_dir, ".agent_state.json")),
+    )
     paper = [t for t in trades if t.get("paper")]
     live = [t for t in trades if not t.get("paper")]
     print(format_report(compute_stats(paper)))

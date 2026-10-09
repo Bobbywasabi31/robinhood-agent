@@ -5,7 +5,15 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from paper_stats import compute_stats, format_report, load_journal
+from paper_stats import (
+    APPEND_JOURNAL_FILENAME,
+    compute_stats,
+    default_append_journal_path,
+    format_report,
+    load_append_journal,
+    load_journal,
+    merge_trades,
+)
 
 
 def trade(time, symbol, side, qty, price, pnl, paper=True):
@@ -119,3 +127,39 @@ def test_format_report_shows_key_lines():
     out_empty = format_report(compute_stats([]))
     assert "Win rate:           n/a" in out_empty
     assert "Open positions:     none" in out_empty
+
+
+def test_default_append_journal_path_name():
+    assert default_append_journal_path().endswith(APPEND_JOURNAL_FILENAME)
+    assert APPEND_JOURNAL_FILENAME == "paper_journal.jsonl"
+
+
+def test_load_append_journal_roundtrip_and_skips_bad_lines():
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, APPEND_JOURNAL_FILENAME)
+    with open(path, "w") as f:
+        f.write(json.dumps(FIXTURE[0]) + "\n")
+        f.write("{not json\n")          # corrupt line skipped
+        f.write("\n")                   # blank line skipped
+        f.write("[1, 2]\n")             # non-dict line skipped
+        f.write(json.dumps(FIXTURE[1]) + "\n")
+    assert load_append_journal(path) == [FIXTURE[0], FIXTURE[1]]
+
+
+def test_load_append_journal_missing_returns_empty():
+    assert load_append_journal(os.path.join(tempfile.mkdtemp(), "nope.jsonl")) == []
+
+
+def test_merge_trades_dedupes_journal_and_state_overlap():
+    # The same trade recorded in the journal and still sitting in today's
+    # state file must only count once in stats.
+    merged = merge_trades([FIXTURE[0], FIXTURE[1]], [FIXTURE[1], FIXTURE[2]])
+    assert merged == [FIXTURE[0], FIXTURE[1], FIXTURE[2]]
+    s = compute_stats(merged)
+    assert s["trades"] == 3
+    assert s["total_pnl"] == 5.0
+
+
+def test_merge_trades_empty():
+    assert merge_trades() == []
+    assert merge_trades([], []) == []

@@ -45,6 +45,12 @@ python3 agent.py journal             # today's trades + P&L
 python3 agent.py stats              # paper-journal stats: win rate, avg win/loss, exposure, drawdown (read-only)
 ```
 
+Every trade (paper or live) is also appended to `paper_journal.jsonl`, an
+append-only log that survives the daily `.agent_state.json` roll — `stats`
+merges both (duplicates dropped) so long-term paper stats span all history.
+Bad lines in the journal are skipped; the journal caps itself at 20k lines
+(keeps the newest 15k).
+
 ## Investment thesis (one page per trade)
 
 Every proposed trade generates a **written essay on risk and reward** before

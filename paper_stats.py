@@ -2,8 +2,10 @@
 """
 Paper-journal stats report — read-only analysis.
 
-Crunches the paper-trading journal (the trade list Guardrails persists to
-.agent_state.json) into win rate, avg win/loss, open exposure, and drawdown.
+Crunches the paper-trading journal into win rate, avg win/loss, open
+exposure, and drawdown. The journal is the append-only JSONL file
+(paper_journal.jsonl) that Guardrails maintains next to the daily
+.agent_state.json; merging both keeps stats across the daily roll.
 
 Strictly read-only: pure functions over a trade list, no trading logic, no
 network, no real-money paths. Nothing here can place or alter an order.
@@ -14,6 +16,8 @@ Trade dicts follow the guardrails.record_trade() schema:
 """
 import json
 import os
+
+APPEND_JOURNAL_FILENAME = "paper_journal.jsonl"
 
 # Mirrors guardrails.Guardrails._state_path() — read here, never written.
 JOURNAL_FILENAME = ".agent_state.json"
@@ -33,6 +37,52 @@ def load_journal(state_path):
 def default_journal_path(repo_dir=None):
     repo_dir = repo_dir or os.path.dirname(os.path.abspath(__file__))
     return os.path.join(repo_dir, JOURNAL_FILENAME)
+
+
+def default_append_journal_path(repo_dir=None):
+    repo_dir = repo_dir or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(repo_dir, APPEND_JOURNAL_FILENAME)
+
+
+def load_append_journal(path):
+    """Read the append-only JSONL journal; missing file or bad lines -> skipped."""
+    trades = []
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict):
+                    trades.append(entry)
+    except (FileNotFoundError, OSError):
+        return []
+    return trades
+
+
+def trade_key(trade):
+    """Identity of a trade for dedupe — stable across the journal and the state file."""
+    return (
+        str(trade.get("date")), str(trade.get("time")), str(trade.get("symbol")),
+        str(trade.get("side")), trade.get("quantity"), trade.get("price"),
+        str(trade.get("order_id")),
+    )
+
+
+def merge_trades(*trade_lists):
+    """Union of trade lists in order, dropping exact duplicates (first copy wins)."""
+    seen, merged = set(), []
+    for trades in trade_lists:
+        for t in trades:
+            key = trade_key(t)
+            if key not in seen:
+                seen.add(key)
+                merged.append(t)
+    return merged
 
 
 def compute_stats(trades):

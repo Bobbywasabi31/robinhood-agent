@@ -160,6 +160,43 @@ def test_universe_fail_closed_when_data_missing():
     finally:
         gmod.load_universe = orig
 
+def test_record_trade_appends_to_append_journal():
+    g = make_guards()
+    jpath = os.path.join(g.base_dir, "paper_journal.jsonl")
+    assert not os.path.exists(jpath)
+    g.record_trade("AAPL", "buy", 1, 200.0, order_id="oid-1", paper=True)
+    g.record_trade("MSFT", "sell", 2, 400.0, order_id="oid-2", paper=True)
+    with open(jpath) as f:
+        lines = [json.loads(line) for line in f if line.strip()]
+    assert len(lines) == 2
+    assert lines[0]["symbol"] == "AAPL" and lines[0]["order_id"] == "oid-1"
+    assert lines[1]["symbol"] == "MSFT" and lines[1]["order_id"] == "oid-2"
+    assert lines[0]["paper"] is True
+    assert all("date" in e and "time" in e for e in lines)
+
+
+def test_record_pnl_amends_last_journal_line():
+    g = make_guards()
+    jpath = os.path.join(g.base_dir, "paper_journal.jsonl")
+    g.record_trade("AAPL", "buy", 1, 200.0, paper=True)
+    g.record_pnl(12.5)
+    with open(jpath) as f:
+        lines = [json.loads(line) for line in f if line.strip()]
+    assert len(lines) == 1
+    assert lines[0]["pnl"] == 12.5
+
+
+def test_journal_append_failure_never_breaks_recording():
+    g = make_guards()
+    # Make the journal path a directory so appends fail — recording must survive.
+    jpath = os.path.join(g.base_dir, "paper_journal.jsonl")
+    os.mkdir(jpath)
+    g.record_trade("AAPL", "buy", 1, 200.0, paper=True)
+    assert len(g._trades_today) == 1
+    g.record_pnl(5.0)
+    assert g._trades_today[-1]["pnl"] == 5.0
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

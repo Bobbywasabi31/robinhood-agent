@@ -18,6 +18,10 @@ import os
 import time
 from datetime import date, datetime
 
+# Single source for the append-only journal name (mirrored by paper_stats users
+# that can't import guardrails). paper_stats imports only the stdlib, so no cycle.
+from paper_stats import APPEND_JOURNAL_FILENAME
+
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guardrails.json")
 
 DEFAULTS = {
@@ -149,6 +153,55 @@ class Guardrails:
 
         return True, "OK"
 
+    def _append_journal(self, entry):
+        """Append one trade to the append-only JSONL journal.
+
+        Survives the daily .agent_state.json roll so long-term paper stats stay
+        readable. Must never break trade recording — I/O failures are logged only.
+        """
+        path = os.path.join(self.base_dir, APPEND_JOURNAL_FILENAME)
+        try:
+            with open(path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+            self._rotate_journal(path)
+        except OSError as e:
+            self.log(f"journal append failed: {e}")
+
+    def _rotate_journal(self, path, limit=20000, keep=15000):
+        """Cap the journal: past `limit` lines, keep the newest `keep`."""
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+        except OSError:
+            return
+        if len(lines) > limit:
+            tmp = path + ".tmp"
+            try:
+                with open(tmp, "w") as f:
+                    f.writelines(lines[-keep:])
+                os.replace(tmp, path)
+            except OSError as e:
+                self.log(f"journal rotation failed: {e}")
+
+    def _amend_journal_pnl(self, pnl):
+        """Set realized P&L on the most recent journal line (record_pnl targets
+        the most recent trade, which is also the last journal line)."""
+        path = os.path.join(self.base_dir, APPEND_JOURNAL_FILENAME)
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+            if not lines:
+                return
+            entry = json.loads(lines[-1])
+            entry["pnl"] = pnl
+            lines[-1] = json.dumps(entry) + "\n"
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                f.writelines(lines)
+            os.replace(tmp, path)
+        except (OSError, ValueError) as e:
+            self.log(f"journal pnl amend failed: {e}")
+
     def record_trade(self, symbol, side, quantity, price, order_id=None, paper=False):
         symbol = symbol.upper()
         self._trades_today.append({
@@ -161,12 +214,14 @@ class Guardrails:
         })
         self._last_trade_time[symbol] = time.time()
         self._save_state()
+        self._append_journal(self._trades_today[-1])
 
     def record_pnl(self, pnl):
         """Attach realized P&L to the most recent trade (for daily loss tracking)."""
         if self._trades_today:
             self._trades_today[-1]["pnl"] = pnl
             self._save_state()
+            self._amend_journal_pnl(pnl)
 
     def daily_summary(self):
         today = str(date.today())
