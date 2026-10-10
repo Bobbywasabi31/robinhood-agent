@@ -9,7 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats               Paper stats: win rate, avg win/loss, per-symbol P&L, drawdown
+  stats [--json]        Paper stats (text report; --json for machine-readable JSON)
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -226,14 +226,15 @@ def extract_order_id(result):
     return m.group(1) if m else None
 
 
-def cmd_stats(guards):
+def cmd_stats(guards, as_json=False):
     """Read-only paper-journal stats. Never touches the API or trading logic.
 
     Merges the append-only journal (long-term history) with today's state file
     (which rolls daily) so stats survive midnight; duplicates are dropped.
+    as_json prints the same stats as machine-readable JSON instead of text.
     """
     from paper_stats import (
-        compute_stats, default_append_journal_path, format_report,
+        compute_stats, default_append_journal_path, format_json, format_report,
         load_append_journal, load_journal, merge_trades,
     )
     trades = merge_trades(
@@ -242,7 +243,11 @@ def cmd_stats(guards):
     )
     paper = [t for t in trades if t.get("paper")]
     live = [t for t in trades if not t.get("paper")]
-    print(format_report(compute_stats(paper)))
+    stats = compute_stats(paper)
+    if as_json:
+        print(format_json(stats, live_excluded=len(live)))
+        return
+    print(format_report(stats))
     if live:
         print(f"({len(live)} live trade(s) in the journal — excluded from paper stats.)")
     if not paper:
@@ -272,7 +277,7 @@ def main():
         cmd_journal(guards)
         return
     if cmd == "stats":
-        cmd_stats(guards)
+        cmd_stats(guards, as_json="--json" in sys.argv[2:])
         return
     if cmd == "tools":
         client = get_client()

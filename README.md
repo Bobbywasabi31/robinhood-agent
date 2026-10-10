@@ -43,6 +43,7 @@ python3 agent.py buy LIN 10 520 470  # buy 10, target $520, stop $470 (writes th
 python3 agent.py paper LIN 10        # simulate without touching the API
 python3 agent.py journal             # today's trades + P&L
 python3 agent.py stats              # paper-journal stats: win rate, avg win/loss, exposure, drawdown, daily + per-symbol P&L (read-only)
+python3 agent.py stats --json     # same stats as machine-readable JSON (for other tools/AIs)
 ```
 
 Every trade (paper or live) is also appended to `paper_journal.jsonl`, an

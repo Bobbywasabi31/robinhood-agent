@@ -212,3 +212,13 @@ def format_report(stats):
     else:
         lines.append("  Open positions:     none")
     return "\n".join(lines) + "\n"
+
+
+def format_json(stats, live_excluded=0):
+    """Render a stats dict as machine-readable JSON (for other tools/AIs).
+
+    Carries the same exclusion info as format_report(): the human report
+    prints a note when live trades were dropped, here it's a count field.
+    """
+    payload = {"stats": stats, "live_excluded": live_excluded}
+    return json.dumps(payload, indent=2, sort_keys=True)

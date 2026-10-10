@@ -9,6 +9,7 @@ from paper_stats import (
     APPEND_JOURNAL_FILENAME,
     compute_stats,
     default_append_journal_path,
+    format_json,
     format_report,
     load_append_journal,
     load_journal,
@@ -255,3 +256,67 @@ def test_format_report_includes_daily_pnl():
     assert "Daily P&L:" in report
     assert "2026-10-09: $-5.00 over 1 trades (0W/1L)" in report
     assert "2026-10-10: $4.00 over 1 trades (1W/0L)" in report
+
+
+def test_format_json_roundtrips_compute_stats():
+    payload = json.loads(format_json(compute_stats(FIXTURE)))
+    assert payload["live_excluded"] == 0
+    s = payload["stats"]
+    assert s["trades"] == 3
+    assert s["total_pnl"] == 5.0
+    assert s["win_rate"] == 0.5
+    assert s["by_day"]["2026-10-09"]["pnl"] == 5.0
+    assert s["by_symbol"]["AAPL"]["pnl"] == 5.0
+
+
+def test_format_json_carries_live_excluded():
+    payload = json.loads(
+        format_json(compute_stats(paper_only(FIXTURE_WITH_LIVE)), live_excluded=1))
+    assert payload["live_excluded"] == 1
+    assert payload["stats"]["trades"] == 3  # live trade dropped before crunching
+
+
+def test_format_json_empty_stats_is_valid():
+    payload = json.loads(format_json(compute_stats([])))
+    assert payload["stats"]["trades"] == 0
+    assert payload["stats"]["win_rate"] is None  # None -> null, not an error
+    assert payload["live_excluded"] == 0
+
+
+def test_cmd_stats_json_end_to_end():
+    """agent.py stats --json prints one parseable JSON object, not the text report."""
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    import agent
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "paper_journal.jsonl"), "w") as f:
+            for t in FIXTURE_WITH_LIVE:
+                f.write(json.dumps(t) + "\n")
+        guards = SimpleNamespace(base_dir=tmp)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            agent.cmd_stats(guards, as_json=True)
+        out = buf.getvalue()
+    payload = json.loads(out)
+    assert payload["live_excluded"] == 1
+    assert payload["stats"]["trades"] == 3
+    assert payload["stats"]["total_pnl"] == 5.0
+    assert "Paper journal stats" not in out  # no text-report bleed
+
+
+def test_cmd_stats_text_default_unchanged():
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    import agent
+    with tempfile.TemporaryDirectory() as tmp:
+        guards = SimpleNamespace(base_dir=tmp)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            agent.cmd_stats(guards)
+        out = buf.getvalue()
+    assert "Paper journal stats" in out
+    assert "No paper trades in the journal yet." in out
