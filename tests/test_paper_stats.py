@@ -10,11 +10,13 @@ from paper_stats import (
     compute_stats,
     default_append_journal_path,
     filter_trades_by_date,
+    filter_trades_by_symbols,
     format_json,
     format_report,
     load_append_journal,
     load_journal,
     merge_trades,
+    normalize_symbols,
     parse_iso_date,
 )
 
@@ -450,3 +452,93 @@ def test_cmd_stats_bad_date_exits_2():
     else:
         raise AssertionError("expected SystemExit")
     assert "bad date" in err.getvalue()
+
+
+def test_normalize_symbols():
+    assert normalize_symbols(None) == []
+    assert normalize_symbols("") == []
+    assert normalize_symbols("aapl, MSFT ,aapl,") == ["AAPL", "MSFT"]
+    assert normalize_symbols(["tsla", " TSLA "]) == ["TSLA"]
+    assert normalize_symbols(["", "  "]) == []
+
+
+def test_filter_trades_by_symbols():
+    kept, excluded = filter_trades_by_symbols(FIXTURE, "aapl")
+    assert [t["symbol"] for t in kept] == ["AAPL", "AAPL"]
+    assert excluded == 1
+
+
+def test_filter_trades_by_symbols_passthrough():
+    kept, excluded = filter_trades_by_symbols(FIXTURE)
+    assert len(kept) == len(FIXTURE) and kept is not FIXTURE
+    assert excluded == 0
+
+
+def test_filter_trades_by_symbols_symbol_less_excluded():
+    trades = FIXTURE + [trade("2026-10-09T11:00:00", None, "buy", 1, 50.0, 0.0)]
+    kept, excluded = filter_trades_by_symbols(trades, "AAPL")
+    assert len(kept) == 2
+    assert excluded == 2  # MSFT + the symbol-less trade
+
+
+def test_compute_stats_records_symbols():
+    s = compute_stats(FIXTURE, symbols="aapl,msft")
+    assert s["trades"] == 3
+    assert s["symbols"] == ["AAPL", "MSFT"]
+    assert s["symbol_excluded"] == 0
+
+
+def test_compute_stats_symbols_compose_with_date_range():
+    s = compute_stats(MULTI_DAY, date_from="2026-10-07", symbols="msft,nvda")
+    assert s["trades"] == 2  # MSFT + NVDA, both in range
+    assert s["symbols"] == ["MSFT", "NVDA"]
+    assert s["symbol_excluded"] == 1  # the in-range AAPL trade
+
+
+def test_format_report_symbols_header():
+    out = format_report(compute_stats(MULTI_DAY, symbols="nvda"))
+    assert "Symbols:            NVDA (3 other-symbol trade(s) excluded)" in out
+    assert "Symbols:" not in format_report(compute_stats(MULTI_DAY))
+
+
+def test_format_json_carries_symbols():
+    payload = json.loads(format_json(compute_stats(MULTI_DAY, symbols="AAPL")))
+    assert payload["stats"]["symbols"] == ["AAPL"]
+    assert payload["stats"]["symbol_excluded"] == 2
+
+
+def test_cmd_stats_symbols_end_to_end():
+    """agent.py stats --symbols restricts the report to those tickers."""
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    import agent
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "paper_journal.jsonl"), "w") as f:
+            for t in MULTI_DAY:
+                f.write(json.dumps(t) + "\n")
+        guards = SimpleNamespace(base_dir=tmp)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            agent.cmd_stats(guards, symbols="msft")
+        out = buf.getvalue()
+    assert "Symbols:            MSFT" in out
+    assert "Trades analyzed:    1" in out
+
+
+def test_cmd_stats_symbols_empty_journal_message():
+    """With a filter set but no paper trades at all, the message names the filters."""
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    import agent
+    with tempfile.TemporaryDirectory() as tmp:
+        guards = SimpleNamespace(base_dir=tmp)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            agent.cmd_stats(guards, symbols="MSFT")
+        out = buf.getvalue()
+    assert "Trades analyzed:    0" in out
+    assert "No paper trades in the journal for those filters." in out

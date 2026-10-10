@@ -134,9 +134,48 @@ def filter_trades_by_date(trades, date_from=None, date_to=None):
     return kept, undated
 
 
-def compute_stats(trades, date_from=None, date_to=None):
+def normalize_symbols(symbols):
+    """Canonical symbol list from a --symbols value (str, list, or None).
+
+    Upper-cased, de-duped, order preserved; None/blank -> [].
+    """
+    if symbols is None:
+        return []
+    if isinstance(symbols, (list, tuple)):
+        parts = [str(s).strip().upper() for s in symbols]
+    else:
+        parts = [s.strip().upper() for s in str(symbols).split(",")]
+    seen, out = set(), []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def filter_trades_by_symbols(trades, symbols=None):
+    """Keep trades whose symbol is in `symbols` (str or list, case-insensitive).
+
+    Returns (filtered, excluded): symbol-less trades can't match and count
+    as excluded. No symbols -> passthrough.
+    """
+    wanted = set(normalize_symbols(symbols))
+    if not wanted:
+        return list(trades), 0
+    kept, excluded = [], 0
+    for t in trades:
+        if (t.get("symbol") or "").upper() in wanted:
+            kept.append(t)
+        else:
+            excluded += 1
+    return kept, excluded
+
+
+def compute_stats(trades, date_from=None, date_to=None, symbols=None):
     """Crunch a trade list into a stats dict. Pure — no I/O."""
     trades, undated_excluded = filter_trades_by_date(trades, date_from, date_to)
+    wanted = normalize_symbols(symbols)
+    trades, symbol_excluded = filter_trades_by_symbols(trades, wanted)
     # Sort by (date, time): time alone is wrong once the journal spans days.
     trades = sorted(trades, key=lambda t: (t.get("date") or "", t.get("time") or ""))
     n = len(trades)
@@ -221,6 +260,8 @@ def compute_stats(trades, date_from=None, date_to=None):
         "date_from": date_from,
         "date_to": date_to,
         "undated_excluded": undated_excluded,
+        "symbols": wanted,
+        "symbol_excluded": symbol_excluded,
     }
 
 
@@ -241,6 +282,11 @@ def format_report(stats):
         if stats.get("undated_excluded"):
             note = f" ({stats['undated_excluded']} undated trade(s) excluded)"
         lines.append(f"  Date range:         {rng}{note}")
+    if stats.get("symbols"):
+        note = ""
+        if stats.get("symbol_excluded"):
+            note = f" ({stats['symbol_excluded']} other-symbol trade(s) excluded)"
+        lines.append(f"  Symbols:            {', '.join(stats['symbols'])}{note}")
     lines += [
         f"  Trades analyzed:    {stats['trades']}",
         f"  Realized (pnl set): {stats['realized_trades']} "

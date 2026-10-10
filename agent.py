@@ -9,7 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats [--json] [--from DATE] [--to DATE]   Paper stats for a date range (DATE = YYYY-MM-DD)
+  stats [--json] [--from DATE] [--to DATE] [--symbols A,B]   Paper-journal stats
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -226,13 +226,14 @@ def extract_order_id(result):
     return m.group(1) if m else None
 
 
-def cmd_stats(guards, as_json=False, date_from=None, date_to=None):
+def cmd_stats(guards, as_json=False, date_from=None, date_to=None, symbols=None):
     """Read-only paper-journal stats. Never touches the API or trading logic.
 
     Merges the append-only journal (long-term history) with today's state file
     (which rolls daily) so stats survive midnight; duplicates are dropped.
     as_json prints the same stats as machine-readable JSON instead of text.
     date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
+    symbols ("AAPL,MSFT", case-insensitive) restricts to those tickers.
     """
     from paper_stats import (
         compute_stats, default_append_journal_path, format_json, format_report,
@@ -245,7 +246,8 @@ def cmd_stats(guards, as_json=False, date_from=None, date_to=None):
     paper = [t for t in trades if t.get("paper")]
     live = [t for t in trades if not t.get("paper")]
     try:
-        stats = compute_stats(paper, date_from=date_from, date_to=date_to)
+        stats = compute_stats(paper, date_from=date_from, date_to=date_to,
+                              symbols=symbols)
     except ValueError as e:
         print(f"stats: bad date: {e}", file=sys.stderr)
         sys.exit(2)
@@ -256,8 +258,8 @@ def cmd_stats(guards, as_json=False, date_from=None, date_to=None):
     if live:
         print(f"({len(live)} live trade(s) in the journal — excluded from paper stats.)")
     if not paper:
-        if date_from or date_to:
-            print("No paper trades in the journal for that date range.")
+        if date_from or date_to or symbols:
+            print("No paper trades in the journal for those filters.")
         else:
             print("No paper trades in the journal yet.")
 
@@ -296,7 +298,8 @@ def main():
         rest = sys.argv[2:]
         cmd_stats(guards, as_json="--json" in rest,
                   date_from=_flag_value(rest, "--from"),
-                  date_to=_flag_value(rest, "--to"))
+                  date_to=_flag_value(rest, "--to"),
+                  symbols=_flag_value(rest, "--symbols"))
         return
     if cmd == "tools":
         client = get_client()
