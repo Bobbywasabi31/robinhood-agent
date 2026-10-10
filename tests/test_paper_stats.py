@@ -9,11 +9,13 @@ from paper_stats import (
     APPEND_JOURNAL_FILENAME,
     compute_stats,
     default_append_journal_path,
+    filter_trades_by_date,
     format_json,
     format_report,
     load_append_journal,
     load_journal,
     merge_trades,
+    parse_iso_date,
 )
 
 
@@ -320,3 +322,139 @@ def test_cmd_stats_text_default_unchanged():
         out = buf.getvalue()
     assert "Paper journal stats" in out
     assert "No paper trades in the journal yet." in out
+
+
+def trade_on(day, time, symbol, side, qty, price, pnl, paper=True):
+    t = trade(time, symbol, side, qty, price, pnl, paper)
+    t["date"] = day
+    t["time"] = f"{day}T{time}"
+    t["order_id"] = f"paper-{day}-{time}"
+    return t
+
+
+MULTI_DAY = [
+    trade_on("2026-10-06", "09:31:00", "AAPL", "buy", 1, 200.0, 10.0),
+    trade_on("2026-10-07", "09:45:00", "AAPL", "sell", 1, 210.0, -4.0),
+    trade_on("2026-10-08", "10:00:00", "MSFT", "buy", 2, 400.0, 0.0),
+    trade_on("2026-10-09", "10:15:00", "NVDA", "buy", 1, 150.0, 6.0),
+]
+
+
+def test_parse_iso_date():
+    assert str(parse_iso_date("2026-10-09")) == "2026-10-09"
+    assert parse_iso_date("  2026-10-09  ") is not None  # padded ok
+    assert parse_iso_date("") is None
+    assert parse_iso_date(None) is None
+    for bad in ("10/09/2026", "2026-13-01", "yesterday", "2026-10-9x"):
+        try:
+            parse_iso_date(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad!r}")
+
+
+def test_filter_trades_by_date_bounds():
+    kept, und = filter_trades_by_date(MULTI_DAY, "2026-10-07", "2026-10-08")
+    assert und == 0
+    assert [t["date"] for t in kept] == ["2026-10-07", "2026-10-08"]  # inclusive
+    kept, _ = filter_trades_by_date(MULTI_DAY, date_from="2026-10-08")
+    assert [t["date"] for t in kept] == ["2026-10-08", "2026-10-09"]
+    kept, _ = filter_trades_by_date(MULTI_DAY, date_to="2026-10-06")
+    assert [t["date"] for t in kept] == ["2026-10-06"]
+
+
+def test_filter_trades_by_date_no_bounds_is_passthrough():
+    kept, und = filter_trades_by_date(MULTI_DAY)
+    assert len(kept) == len(MULTI_DAY) and und == 0
+
+
+def test_filter_trades_by_date_undated():
+    rows = MULTI_DAY + [
+        {**trade("09:31:00", "X", "buy", 1, 1.0, 0.0), "date": ""},
+        {**trade("09:32:00", "Y", "buy", 1, 1.0, 0.0), "date": "not-a-date"},
+    ]
+    kept, und = filter_trades_by_date(rows, "2026-10-06", "2026-10-09")
+    assert und == 2  # blank + garbage dates dropped while filtering
+    assert all(t.get("symbol") not in ("X", "Y") for t in kept)
+    kept, und = filter_trades_by_date(rows)  # no bounds: everything kept
+    assert und == 0 and len(kept) == len(rows)
+
+
+def test_filter_trades_by_date_bad_bounds():
+    for kwargs in ({"date_from": "10/09/2026"},
+                   {"date_to": "next friday"},
+                   {"date_from": "2026-10-09", "date_to": "2026-10-06"}):
+        try:
+            filter_trades_by_date(MULTI_DAY, **kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {kwargs}")
+
+
+def test_compute_stats_records_date_range():
+    stats = compute_stats(MULTI_DAY, date_from="2026-10-07", date_to="2026-10-08")
+    assert stats["date_from"] == "2026-10-07"
+    assert stats["date_to"] == "2026-10-08"
+    assert stats["undated_excluded"] == 0
+    assert stats["trades"] == 2
+    assert stats["total_pnl"] == -4.0  # only the in-range trades count
+    # Unfiltered stats carry no range.
+    plain = compute_stats(MULTI_DAY)
+    assert plain["date_from"] is None and plain["date_to"] is None
+    assert plain["trades"] == 4
+
+
+def test_format_report_date_range_header():
+    out = format_report(compute_stats(MULTI_DAY, "2026-10-07", "2026-10-08"))
+    assert "Date range:" in out
+    assert "2026-10-07 -> 2026-10-08" in out
+    out_plain = format_report(compute_stats(MULTI_DAY))
+    assert "Date range:" not in out_plain
+
+
+def test_format_json_carries_date_range():
+    payload = json.loads(format_json(
+        compute_stats(MULTI_DAY, date_from="2026-10-07")))
+    assert payload["stats"]["date_from"] == "2026-10-07"
+    assert payload["stats"]["date_to"] is None
+
+
+def test_cmd_stats_date_filter_end_to_end():
+    """agent.py stats --from/--to filters the journal; range shown in report."""
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    import agent
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "paper_journal.jsonl"), "w") as f:
+            for t in MULTI_DAY:
+                f.write(json.dumps(t) + "\n")
+        guards = SimpleNamespace(base_dir=tmp)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            agent.cmd_stats(guards, date_from="2026-10-07", date_to="2026-10-08")
+        out = buf.getvalue()
+    assert "Date range:" in out
+    assert "Trades analyzed:    2" in out
+
+
+def test_cmd_stats_bad_date_exits_2():
+    """Garbage --from prints a friendly error and exits 2 (not a traceback)."""
+    import io
+    from contextlib import redirect_stderr
+    from types import SimpleNamespace
+
+    import agent
+    guards = SimpleNamespace(base_dir=tempfile.mkdtemp())
+    err = io.StringIO()
+    try:
+        with redirect_stderr(err):
+            agent.cmd_stats(guards, date_from="not-a-date")
+    except SystemExit as e:
+        assert e.code == 2
+    else:
+        raise AssertionError("expected SystemExit")
+    assert "bad date" in err.getvalue()

@@ -9,7 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats [--json]        Paper stats (text report; --json for machine-readable JSON)
+  stats [--json] [--from DATE] [--to DATE]   Paper stats for a date range (DATE = YYYY-MM-DD)
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -226,12 +226,13 @@ def extract_order_id(result):
     return m.group(1) if m else None
 
 
-def cmd_stats(guards, as_json=False):
+def cmd_stats(guards, as_json=False, date_from=None, date_to=None):
     """Read-only paper-journal stats. Never touches the API or trading logic.
 
     Merges the append-only journal (long-term history) with today's state file
     (which rolls daily) so stats survive midnight; duplicates are dropped.
     as_json prints the same stats as machine-readable JSON instead of text.
+    date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
     """
     from paper_stats import (
         compute_stats, default_append_journal_path, format_json, format_report,
@@ -243,7 +244,11 @@ def cmd_stats(guards, as_json=False):
     )
     paper = [t for t in trades if t.get("paper")]
     live = [t for t in trades if not t.get("paper")]
-    stats = compute_stats(paper)
+    try:
+        stats = compute_stats(paper, date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        print(f"stats: bad date: {e}", file=sys.stderr)
+        sys.exit(2)
     if as_json:
         print(format_json(stats, live_excluded=len(live)))
         return
@@ -251,7 +256,10 @@ def cmd_stats(guards, as_json=False):
     if live:
         print(f"({len(live)} live trade(s) in the journal — excluded from paper stats.)")
     if not paper:
-        print("No paper trades in the journal yet.")
+        if date_from or date_to:
+            print("No paper trades in the journal for that date range.")
+        else:
+            print("No paper trades in the journal yet.")
 
 
 def cmd_journal(guards):
@@ -266,6 +274,14 @@ def cmd_journal(guards):
                   f"{t['symbol']} @ ${t['price']:.2f}")
 
 
+def _flag_value(args, *names):
+    """Value of the first matching --flag in args, or None."""
+    for i, a in enumerate(args):
+        if a in names and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -277,7 +293,10 @@ def main():
         cmd_journal(guards)
         return
     if cmd == "stats":
-        cmd_stats(guards, as_json="--json" in sys.argv[2:])
+        rest = sys.argv[2:]
+        cmd_stats(guards, as_json="--json" in rest,
+                  date_from=_flag_value(rest, "--from"),
+                  date_to=_flag_value(rest, "--to"))
         return
     if cmd == "tools":
         client = get_client()

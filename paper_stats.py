@@ -16,6 +16,7 @@ Trade dicts follow the guardrails.record_trade() schema:
 """
 import json
 import os
+from datetime import date as _date
 
 APPEND_JOURNAL_FILENAME = "paper_journal.jsonl"
 
@@ -85,8 +86,57 @@ def merge_trades(*trade_lists):
     return merged
 
 
-def compute_stats(trades):
+def parse_iso_date(value):
+    """Parse a YYYY-MM-DD date string; blank/None -> None; garbage -> ValueError."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return _date.fromisoformat(s)
+    except ValueError:
+        raise ValueError(f"not a YYYY-MM-DD date: {value!r}")
+
+
+def _trade_date(trade):
+    """A trade's date, or None when missing/unparseable (never raises)."""
+    try:
+        return parse_iso_date(trade.get("date"))
+    except ValueError:
+        return None
+
+
+def filter_trades_by_date(trades, date_from=None, date_to=None):
+    """Keep trades with date in [date_from, date_to] (inclusive, ISO strings).
+
+    Returns (filtered, undated_excluded): trades with a missing or
+    unparseable date are dropped only when a bound is actually set.
+    A bound that isn't YYYY-MM-DD, or from > to, raises ValueError.
+    """
+    d_from = parse_iso_date(date_from) if date_from else None
+    d_to = parse_iso_date(date_to) if date_to else None
+    if d_from is not None and d_to is not None and d_from > d_to:
+        raise ValueError(f"--from {date_from} is after --to {date_to}")
+    if d_from is None and d_to is None:
+        return list(trades), 0
+    kept, undated = [], 0
+    for t in trades:
+        d = _trade_date(t)
+        if d is None:
+            undated += 1
+            continue
+        if d_from is not None and d < d_from:
+            continue
+        if d_to is not None and d > d_to:
+            continue
+        kept.append(t)
+    return kept, undated
+
+
+def compute_stats(trades, date_from=None, date_to=None):
     """Crunch a trade list into a stats dict. Pure — no I/O."""
+    trades, undated_excluded = filter_trades_by_date(trades, date_from, date_to)
     # Sort by (date, time): time alone is wrong once the journal spans days.
     trades = sorted(trades, key=lambda t: (t.get("date") or "", t.get("time") or ""))
     n = len(trades)
@@ -168,6 +218,9 @@ def compute_stats(trades):
         "by_symbol": by_symbol,
         "by_day": by_day,
         "max_drawdown": round(max_dd, 2),
+        "date_from": date_from,
+        "date_to": date_to,
+        "undated_excluded": undated_excluded,
     }
 
 
@@ -181,6 +234,14 @@ def format_report(stats):
     lines = [
         "",
         "Paper journal stats",
+    ]
+    if stats.get("date_from") or stats.get("date_to"):
+        rng = f"{stats['date_from'] or '...'} -> {stats['date_to'] or '...'}"
+        note = ""
+        if stats.get("undated_excluded"):
+            note = f" ({stats['undated_excluded']} undated trade(s) excluded)"
+        lines.append(f"  Date range:         {rng}{note}")
+    lines += [
         f"  Trades analyzed:    {stats['trades']}",
         f"  Realized (pnl set): {stats['realized_trades']} "
         f"({stats['wins']}W / {stats['losses']}L)",

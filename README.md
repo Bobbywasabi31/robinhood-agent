@@ -44,6 +44,7 @@ python3 agent.py paper LIN 10        # simulate without touching the API
 python3 agent.py journal             # today's trades + P&L
 python3 agent.py stats              # paper-journal stats: win rate, avg win/loss, exposure, drawdown, daily + per-symbol P&L (read-only)
 python3 agent.py stats --json     # same stats as machine-readable JSON (for other tools/AIs)
+python3 agent.py stats --from 2026-10-01 --to 2026-10-07   # restrict to a date range (inclusive, YYYY-MM-DD)
 ```
 
 Every trade (paper or live) is also appended to `paper_journal.jsonl`, an
