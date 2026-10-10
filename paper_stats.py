@@ -229,12 +229,20 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         for sym, q in net_qty.items() if q != 0
     }
 
-    # Drawdown on the cumulative realized-P&L curve (peak-to-trough, $).
-    cumulative, peak, max_dd = 0.0, 0.0, 0.0
-    for p in pnl_values:
+    # Drawdown on the cumulative realized-P&L curve (peak-to-trough, $),
+    # plus the window it happened in (peak date -> trough date). First
+    # occurrence wins when the same drawdown depth repeats.
+    cumulative, peak, peak_date, max_dd = 0.0, 0.0, None, 0.0
+    dd_start, dd_end = None, None
+    for t, p in zip(trades, pnl_values):
+        d = _trade_date(t)
         cumulative += p
-        peak = max(peak, cumulative)
-        max_dd = max(max_dd, peak - cumulative)
+        if cumulative > peak:
+            peak, peak_date = cumulative, d
+        dd = peak - cumulative
+        if dd > max_dd:
+            max_dd, dd_start, dd_end = dd, peak_date, d
+    dd_days = (dd_end - dd_start).days if dd_start and dd_end else None
 
     gross_win = round(sum(wins), 2)
     gross_loss = round(-sum(losses), 2)
@@ -257,6 +265,9 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         "by_symbol": by_symbol,
         "by_day": by_day,
         "max_drawdown": round(max_dd, 2),
+        "max_drawdown_start": dd_start.isoformat() if dd_start else None,
+        "max_drawdown_end": dd_end.isoformat() if dd_end else None,
+        "max_drawdown_days": dd_days,
         "date_from": date_from,
         "date_to": date_to,
         "undated_excluded": undated_excluded,
@@ -272,6 +283,13 @@ def format_report(stats):
 
     win_rate = "n/a" if stats["win_rate"] is None else f"{stats['win_rate'] * 100:.1f}%"
     profit_factor = "n/a" if stats["profit_factor"] is None else str(stats["profit_factor"])
+    dd_line = f"  Max drawdown:       {money(stats['max_drawdown'])}"
+    dd_from, dd_to = stats.get("max_drawdown_start"), stats.get("max_drawdown_end")
+    if dd_from and dd_to:
+        dd_line += f" ({dd_from} -> {dd_to}"
+        if stats.get("max_drawdown_days") is not None:
+            dd_line += f", {stats['max_drawdown_days']}d"
+        dd_line += ")"
     lines = [
         "",
         "Paper journal stats",
@@ -296,7 +314,7 @@ def format_report(stats):
         f"  Avg loss:           {money(stats['avg_loss'])}",
         f"  Profit factor:      {profit_factor}",
         f"  Total P&L:          {money(stats['total_pnl'])}",
-        f"  Max drawdown:       {money(stats['max_drawdown'])}",
+        dd_line,
         f"  Gross notional:     {money(stats['gross_notional'])}",
         f"  Open exposure:      {money(stats['open_exposure'])}",
     ]

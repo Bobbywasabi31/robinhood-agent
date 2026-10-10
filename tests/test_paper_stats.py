@@ -527,6 +527,89 @@ def test_cmd_stats_symbols_end_to_end():
     assert "Trades analyzed:    1" in out
 
 
+def dd_trade(d, time, pnl, symbol="AAPL"):
+    """Dated-trade helper for drawdown-window tests (date may be None)."""
+    return {"date": d, "time": time, "symbol": symbol, "side": "buy",
+            "quantity": 1, "price": 100.0, "order_id": f"dd-{d}-{time}",
+            "pnl": pnl, "paper": True}
+
+
+def test_drawdown_window_dates():
+    # Cumulative: 100 -> 60 -> -20 ; peak 2026-10-01, trough 2026-10-03.
+    trades = [
+        dd_trade("2026-10-01", "09:30:00", 100.0),
+        dd_trade("2026-10-02", "09:30:00", -40.0),
+        dd_trade("2026-10-03", "09:30:00", -80.0),
+    ]
+    s = compute_stats(trades)
+    assert s["max_drawdown"] == 120.0
+    assert s["max_drawdown_start"] == "2026-10-01"
+    assert s["max_drawdown_end"] == "2026-10-03"
+    assert s["max_drawdown_days"] == 2
+
+
+def test_drawdown_window_first_occurrence_wins():
+    trades = [
+        dd_trade("2026-10-01", "09:30:00", 50.0),
+        dd_trade("2026-10-02", "09:30:00", -50.0),  # dd 50: 10-01 -> 10-02
+        dd_trade("2026-10-03", "09:30:00", 50.0),   # back to the peak
+        dd_trade("2026-10-04", "09:30:00", -50.0),  # dd 50 again, no move
+    ]
+    s = compute_stats(trades)
+    assert s["max_drawdown"] == 50.0
+    assert s["max_drawdown_start"] == "2026-10-01"
+    assert s["max_drawdown_end"] == "2026-10-02"
+
+
+def test_drawdown_window_none_when_no_drawdown():
+    s = compute_stats([dd_trade("2026-10-01", "09:30:00", 25.0)])
+    assert s["max_drawdown"] == 0.0
+    assert s["max_drawdown_start"] is None
+    assert s["max_drawdown_end"] is None
+    assert s["max_drawdown_days"] is None
+
+
+def test_drawdown_window_undated_peak():
+    # Peak trade has no date: depth is still measured; the partial window is
+    # suppressed in the report (a half window would mislead).
+    trades = [
+        dd_trade(None, "09:30:00", 50.0),
+        dd_trade("2026-10-02", "09:31:00", -60.0),
+    ]
+    s = compute_stats(trades)
+    assert s["max_drawdown"] == 60.0
+    assert s["max_drawdown_start"] is None
+    assert s["max_drawdown_end"] == "2026-10-02"
+    assert s["max_drawdown_days"] is None
+    assert "Max drawdown:       $60.00 (" not in format_report(s)
+
+
+def test_format_report_drawdown_window():
+    trades = [
+        dd_trade("2026-10-01", "09:30:00", 100.0),
+        dd_trade("2026-10-03", "09:30:00", -120.0),
+    ]
+    out = format_report(compute_stats(trades))
+    assert "Max drawdown:       $120.00 (2026-10-01 -> 2026-10-03, 2d)" in out
+
+
+def test_format_report_no_drawdown_window_parens():
+    out = format_report(compute_stats([dd_trade("2026-10-01", "09:30:00", 25.0)]))
+    assert "Max drawdown:       $0.00" in out
+    assert "Max drawdown:       $0.00 (" not in out
+
+
+def test_format_json_carries_drawdown_window():
+    trades = [
+        dd_trade("2026-10-01", "09:30:00", 100.0),
+        dd_trade("2026-10-03", "09:30:00", -120.0),
+    ]
+    payload = json.loads(format_json(compute_stats(trades)))
+    assert payload["stats"]["max_drawdown_start"] == "2026-10-01"
+    assert payload["stats"]["max_drawdown_end"] == "2026-10-03"
+    assert payload["stats"]["max_drawdown_days"] == 2
+
+
 def test_cmd_stats_symbols_empty_journal_message():
     """With a filter set but no paper trades at all, the message names the filters."""
     import io
