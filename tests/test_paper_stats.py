@@ -324,19 +324,11 @@ def test_cmd_stats_text_default_unchanged():
     assert "No paper trades in the journal yet." in out
 
 
-def trade_on(day, time, symbol, side, qty, price, pnl, paper=True):
-    t = trade(time, symbol, side, qty, price, pnl, paper)
-    t["date"] = day
-    t["time"] = f"{day}T{time}"
-    t["order_id"] = f"paper-{day}-{time}"
-    return t
-
-
 MULTI_DAY = [
-    trade_on("2026-10-06", "09:31:00", "AAPL", "buy", 1, 200.0, 10.0),
-    trade_on("2026-10-07", "09:45:00", "AAPL", "sell", 1, 210.0, -4.0),
-    trade_on("2026-10-08", "10:00:00", "MSFT", "buy", 2, 400.0, 0.0),
-    trade_on("2026-10-09", "10:15:00", "NVDA", "buy", 1, 150.0, 6.0),
+    trade_on("2026-10-06", "2026-10-06T09:31:00", "AAPL", "buy", 1, 200.0, 10.0),
+    trade_on("2026-10-07", "2026-10-07T09:45:00", "AAPL", "sell", 1, 210.0, -4.0),
+    trade_on("2026-10-08", "2026-10-08T10:00:00", "MSFT", "buy", 2, 400.0, 0.0),
+    trade_on("2026-10-09", "2026-10-09T10:15:00", "NVDA", "buy", 1, 150.0, 6.0),
 ]
 
 
