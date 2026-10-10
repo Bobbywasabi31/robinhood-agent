@@ -11,6 +11,7 @@ from paper_stats import (
     default_append_journal_path,
     filter_trades_by_date,
     filter_trades_by_symbols,
+    format_csv,
     format_json,
     format_report,
     load_append_journal,
@@ -625,3 +626,101 @@ def test_cmd_stats_symbols_empty_journal_message():
         out = buf.getvalue()
     assert "Trades analyzed:    0" in out
     assert "No paper trades in the journal for those filters." in out
+
+
+def _csv_rows(text):
+    import csv
+    import io
+    return list(csv.reader(io.StringIO(text)))
+
+
+def test_format_csv_header_and_sections():
+    """CSV has a header and one row per section (summary, day, symbol)."""
+    rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
+    assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
+    body = rows[1:]
+    assert [r[0] for r in body] == ["summary", "day", "symbol", "symbol"]
+    assert body[0][1] == "ALL"
+    assert body[1][1] == "2026-10-09"
+    assert [r[1] for r in body[2:]] == ["AAPL", "MSFT"]  # sorted
+
+
+def test_format_csv_values_match_stats():
+    rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
+    summary, day, aapl, msft = rows[1:]
+    assert summary[2:] == ["3", "1", "1", "5.00"]
+    assert day[2:] == ["3", "1", "1", "5.00"]
+    assert aapl[2:] == ["2", "1", "1", "5.00"]
+    assert msft[2:] == ["1", "0", "0", "0.00"]
+
+
+def test_format_csv_money_is_plain_decimal():
+    """Money columns parse as floats — no $ signs or thousands separators."""
+    trades = [trade("2026-10-09T09:31:00", "AAPL", "buy", 10, 200.0, 1234.56)]
+    rows = _csv_rows(format_csv(compute_stats(trades)))
+    for row in rows[1:]:
+        assert row[5] == "1234.56"  # not "1,234.56" or "$1,234.56"
+        assert float(row[5]) == 1234.56
+
+
+def test_format_csv_empty_stats_is_valid():
+    rows = _csv_rows(format_csv(compute_stats([])))
+    assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
+    assert len(rows) == 2  # header + summary row, no day/symbol rows
+    assert rows[1][:2] == ["summary", "ALL"]
+    assert rows[1][2:] == ["0", "0", "0", "0.00"]
+
+
+def test_cmd_stats_csv_end_to_end():
+    """agent.py stats --csv prints parseable CSV, not the text report."""
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    import agent
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "paper_journal.jsonl"), "w") as f:
+            for t in FIXTURE_WITH_LIVE:
+                f.write(json.dumps(t) + "\n")
+        guards = SimpleNamespace(base_dir=tmp)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            agent.cmd_stats(guards, as_csv=True)
+        out = buf.getvalue()
+    rows = _csv_rows(out)
+    assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
+    assert "Paper journal stats" not in out  # no text-report bleed
+    assert rows[1][0] == "summary"
+    assert rows[1][2:] == ["3", "1", "1", "5.00"]  # live NVDA trade excluded
+
+
+def test_cmd_stats_csv_live_note_goes_to_stderr():
+    """The live-trade exclusion note must not pollute the CSV on stdout."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    from types import SimpleNamespace
+
+    import agent
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "paper_journal.jsonl"), "w") as f:
+            for t in FIXTURE_WITH_LIVE:
+                f.write(json.dumps(t) + "\n")
+        guards = SimpleNamespace(base_dir=tmp)
+        out_buf, err_buf = io.StringIO(), io.StringIO()
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            agent.cmd_stats(guards, as_csv=True)
+    _csv_rows(out_buf.getvalue())  # parses cleanly
+    assert "live" in err_buf.getvalue()
+
+
+def test_cmd_stats_json_and_csv_conflict_exits_2():
+    from types import SimpleNamespace
+
+    import agent
+    guards = SimpleNamespace(base_dir="/nonexistent-dir-no-trades")
+    try:
+        agent.cmd_stats(guards, as_json=True, as_csv=True)
+    except SystemExit as e:
+        assert e.code == 2
+    else:
+        raise AssertionError("expected SystemExit(2) for --json + --csv")

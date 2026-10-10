@@ -14,6 +14,8 @@ Trade dicts follow the guardrails.record_trade() schema:
   {"date", "time", "symbol", "side", "quantity", "price",
    "order_id", "pnl", "paper"}
 """
+import csv
+import io
 import json
 import os
 from datetime import date as _date
@@ -347,3 +349,28 @@ def format_json(stats, live_excluded=0):
     """
     payload = {"stats": stats, "live_excluded": live_excluded}
     return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def format_csv(stats):
+    """Render the tabular parts of a stats dict as CSV (spreadsheets/pandas).
+
+    Columns: section,key,trades,wins,losses,pnl. Money is plain decimal
+    numbers (no $ or thousands separators) so the file parses cleanly.
+    Sections: summary (overall totals), day (one row per day, sorted),
+    symbol (one row per ticker, sorted). Empty breakdowns produce no rows,
+    never an error.
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["section", "key", "trades", "wins", "losses", "pnl"])
+    writer.writerow(["summary", "ALL", stats["trades"], stats["wins"],
+                     stats["losses"], f"{stats['total_pnl']:.2f}"])
+    for day in sorted(stats["by_day"]):
+        row = stats["by_day"][day]
+        writer.writerow(["day", day, row["trades"], row["wins"],
+                         row["losses"], f"{row['pnl']:.2f}"])
+    for sym in sorted(stats["by_symbol"]):
+        row = stats["by_symbol"][sym]
+        writer.writerow(["symbol", sym, row["trades"], row["wins"],
+                         row["losses"], f"{row['pnl']:.2f}"])
+    return buf.getvalue()

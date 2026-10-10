@@ -9,7 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats [--json] [--from DATE] [--to DATE] [--symbols A,B]   Paper-journal stats
+  stats [--json|--csv] [--from DATE] [--to DATE] [--symbols A,B]   Paper-journal stats
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -226,19 +226,24 @@ def extract_order_id(result):
     return m.group(1) if m else None
 
 
-def cmd_stats(guards, as_json=False, date_from=None, date_to=None, symbols=None):
+def cmd_stats(guards, as_json=False, as_csv=False, date_from=None, date_to=None,
+              symbols=None):
     """Read-only paper-journal stats. Never touches the API or trading logic.
 
     Merges the append-only journal (long-term history) with today's state file
     (which rolls daily) so stats survive midnight; duplicates are dropped.
-    as_json prints the same stats as machine-readable JSON instead of text.
+    as_json prints the same stats as machine-readable JSON instead of text;
+    as_csv prints the daily + per-symbol P&L tables as CSV instead of text.
     date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
     symbols ("AAPL,MSFT", case-insensitive) restricts to those tickers.
     """
     from paper_stats import (
-        compute_stats, default_append_journal_path, format_json, format_report,
-        load_append_journal, load_journal, merge_trades,
+        compute_stats, default_append_journal_path, format_csv, format_json,
+        format_report, load_append_journal, load_journal, merge_trades,
     )
+    if as_json and as_csv:
+        print("stats: use only one of --json or --csv", file=sys.stderr)
+        sys.exit(2)
     trades = merge_trades(
         load_append_journal(default_append_journal_path(guards.base_dir)),
         load_journal(os.path.join(guards.base_dir, ".agent_state.json")),
@@ -251,6 +256,12 @@ def cmd_stats(guards, as_json=False, date_from=None, date_to=None, symbols=None)
     except ValueError as e:
         print(f"stats: bad date: {e}", file=sys.stderr)
         sys.exit(2)
+    if as_csv:
+        if live:
+            print(f"stats: {len(live)} live trade(s) excluded from CSV",
+                  file=sys.stderr)
+        print(format_csv(stats), end="")
+        return
     if as_json:
         print(format_json(stats, live_excluded=len(live)))
         return
@@ -296,7 +307,7 @@ def main():
         return
     if cmd == "stats":
         rest = sys.argv[2:]
-        cmd_stats(guards, as_json="--json" in rest,
+        cmd_stats(guards, as_json="--json" in rest, as_csv="--csv" in rest,
                   date_from=_flag_value(rest, "--from"),
                   date_to=_flag_value(rest, "--to"),
                   symbols=_flag_value(rest, "--symbols"))
