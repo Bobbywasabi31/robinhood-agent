@@ -3,7 +3,8 @@
 Paper-journal stats report — read-only analysis.
 
 Crunches the paper-trading journal into win rate, avg win/loss, open
-exposure, and drawdown. The journal is the append-only JSONL file
+exposure, drawdown, and an annualized Sharpe ratio. The journal is the
+append-only JSONL file
 (paper_journal.jsonl) that Guardrails maintains next to the daily
 .agent_state.json; merging both keeps stats across the daily roll.
 
@@ -235,6 +236,27 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
     # Per-month realized P&L (one row per calendar month, YYYY-MM).
     by_month = _bucket_stats(trades, _month_key)
 
+    # Annualized Sharpe ratio over the daily P&L series: mean(daily P&L)
+    # / sample-stdev(daily P&L), scaled by sqrt(252) trading days. Summed
+    # per day straight from the trades (valid dates only — undated or
+    # unparseable dates can't join a time series, and _bucket_stats keys
+    # don't validate). None when fewer than 2 dated trading days or
+    # zero variance.
+    daily_totals = {}
+    for t in trades:
+        d = _trade_date(t)
+        if d is None:
+            continue
+        key = d.isoformat()
+        daily_totals[key] = round(daily_totals.get(key, 0.0) + (t.get("pnl") or 0), 2)
+    daily_pnls = [daily_totals[k] for k in sorted(daily_totals)]
+    sharpe_ratio, sharpe_days = None, len(daily_pnls)
+    if len(daily_pnls) >= 2:
+        mean = sum(daily_pnls) / len(daily_pnls)
+        var = sum((p - mean) ** 2 for p in daily_pnls) / (len(daily_pnls) - 1)
+        if var > 0:
+            sharpe_ratio = round(mean / var ** 0.5 * 252 ** 0.5, 2)
+
     # Per-symbol realized P&L (win/loss counts per ticker).
     by_symbol = {}
     for t in trades:
@@ -343,6 +365,8 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         "max_drawdown_days": dd_days,
         "best_trade": best_trade,
         "worst_trade": worst_trade,
+        "sharpe_ratio": sharpe_ratio,
+        "sharpe_days": sharpe_days,
         "longest_win_streak": longest_win,
         "longest_loss_streak": longest_loss,
         "current_streak": current_streak,
@@ -373,6 +397,7 @@ def format_report(stats):
 
     win_rate = "n/a" if stats["win_rate"] is None else f"{stats['win_rate'] * 100:.1f}%"
     profit_factor = "n/a" if stats["profit_factor"] is None else str(stats["profit_factor"])
+    sharpe = "n/a" if stats["sharpe_ratio"] is None else f"{stats['sharpe_ratio']:.2f}"
     dd_line = f"  Max drawdown:       {money(stats['max_drawdown'])}"
     dd_from, dd_to = stats.get("max_drawdown_start"), stats.get("max_drawdown_end")
     if dd_from and dd_to:
@@ -403,6 +428,7 @@ def format_report(stats):
         f"  Avg win:            {money(stats['avg_win'])}",
         f"  Avg loss:           {money(stats['avg_loss'])}",
         f"  Profit factor:      {profit_factor}",
+        f"  {'Sharpe ratio (ann):':<20}{sharpe}",
         extreme_line("Best trade:", stats["best_trade"]),
         extreme_line("Worst trade:", stats["worst_trade"]),
         f"  Longest win streak: W{stats['longest_win_streak']}",
@@ -456,9 +482,10 @@ def format_csv(stats):
     Columns: section,key,trades,wins,losses,pnl. Money is plain decimal
     numbers (no $ or thousands separators) so the file parses cleanly.
     Sections: summary (overall totals), best/worst (the extreme single
-    trades), streak (longest win/loss streaks and the current one), day
-    (one row per day, sorted), month (one row per calendar month, sorted),
-    symbol (one row per ticker, sorted).
+    trades), streak (longest win/loss streaks and the current one), risk
+    (annualized Sharpe ratio; trades = dated trading days used, pnl = the
+    ratio — no $ involved), day (one row per day, sorted), month (one row
+    per calendar month, sorted), symbol (one row per ticker, sorted).
     Empty breakdowns produce no rows, never an error.
     """
     buf = io.StringIO()
@@ -482,6 +509,9 @@ def format_csv(stats):
         w = cur["length"] if cur["type"] == "win" else 0
         writer.writerow(["streak", f"current_{cur['type']}", cur["length"],
                          w, cur["length"] - w, ""])
+    if stats["sharpe_ratio"] is not None:
+        writer.writerow(["risk", "sharpe_ratio_ann", stats["sharpe_days"],
+                         "", "", f"{stats['sharpe_ratio']:.2f}"])
     for day in sorted(stats["by_day"]):
         row = stats["by_day"][day]
         writer.writerow(["day", day, row["trades"], row["wins"],
