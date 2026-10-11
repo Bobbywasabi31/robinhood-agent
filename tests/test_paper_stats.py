@@ -698,7 +698,7 @@ def _csv_rows(text):
 
 
 def test_format_csv_header_and_sections():
-    """CSV has a header and one row per section (summary, best, worst, streak, day, month, symbol)."""
+    """CSV header plus one row per section: summary, best/worst, streak, day, month, symbol."""
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
     assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
     body = rows[1:]
