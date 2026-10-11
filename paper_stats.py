@@ -246,6 +246,22 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
             max_dd, dd_start, dd_end = dd, peak_date, d
     dd_days = (dd_end - dd_start).days if dd_start and dd_end else None
 
+    # Best/worst single realized trades (symbol + date + pnl). First
+    # occurrence wins when two trades share the same pnl.
+    best_trade, worst_trade = None, None
+    for t, p in zip(trades, pnl_values):
+        if p == 0:
+            continue
+        sym = (t.get("symbol") or "UNKNOWN").upper()
+        day = _trade_date(t)
+        candidate = {"symbol": sym,
+                     "date": day.isoformat() if day else None,
+                     "pnl": round(p, 2)}
+        if best_trade is None or p > best_trade["pnl"]:
+            best_trade = candidate
+        if worst_trade is None or p < worst_trade["pnl"]:
+            worst_trade = candidate
+
     gross_win = round(sum(wins), 2)
     gross_loss = round(-sum(losses), 2)
     denom = len(wins) + len(losses)
@@ -270,6 +286,8 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         "max_drawdown_start": dd_start.isoformat() if dd_start else None,
         "max_drawdown_end": dd_end.isoformat() if dd_end else None,
         "max_drawdown_days": dd_days,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
         "date_from": date_from,
         "date_to": date_to,
         "undated_excluded": undated_excluded,
@@ -282,6 +300,12 @@ def format_report(stats):
     """Render a stats dict as a short human-readable report."""
     def money(v):
         return "n/a" if v is None else f"${v:,.2f}"
+
+    def extreme_line(label, trade):
+        if trade is None:
+            return f"  {label:<20}n/a"
+        day = trade["date"] or "undated"
+        return f"  {label:<20}{money(trade['pnl'])} ({trade['symbol']}, {day})"
 
     win_rate = "n/a" if stats["win_rate"] is None else f"{stats['win_rate'] * 100:.1f}%"
     profit_factor = "n/a" if stats["profit_factor"] is None else str(stats["profit_factor"])
@@ -315,6 +339,8 @@ def format_report(stats):
         f"  Avg win:            {money(stats['avg_win'])}",
         f"  Avg loss:           {money(stats['avg_loss'])}",
         f"  Profit factor:      {profit_factor}",
+        extreme_line("Best trade:", stats["best_trade"]),
+        extreme_line("Worst trade:", stats["worst_trade"]),
         f"  Total P&L:          {money(stats['total_pnl'])}",
         dd_line,
         f"  Gross notional:     {money(stats['gross_notional'])}",
@@ -356,15 +382,23 @@ def format_csv(stats):
 
     Columns: section,key,trades,wins,losses,pnl. Money is plain decimal
     numbers (no $ or thousands separators) so the file parses cleanly.
-    Sections: summary (overall totals), day (one row per day, sorted),
-    symbol (one row per ticker, sorted). Empty breakdowns produce no rows,
-    never an error.
+    Sections: summary (overall totals), best/worst (the extreme single
+    trades), day (one row per day, sorted), symbol (one row per ticker,
+    sorted). Empty breakdowns produce no rows, never an error.
     """
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["section", "key", "trades", "wins", "losses", "pnl"])
     writer.writerow(["summary", "ALL", stats["trades"], stats["wins"],
                      stats["losses"], f"{stats['total_pnl']:.2f}"])
+    for section, trade in (("best", stats["best_trade"]),
+                           ("worst", stats["worst_trade"])):
+        if trade:
+            day = trade["date"] or "undated"
+            pnl = trade["pnl"]
+            writer.writerow([section, f"{trade['symbol']} {day}", 1,
+                             1 if pnl > 0 else 0, 1 if pnl < 0 else 0,
+                             f"{pnl:.2f}"])
     for day in sorted(stats["by_day"]):
         row = stats["by_day"][day]
         writer.writerow(["day", day, row["trades"], row["wins"],

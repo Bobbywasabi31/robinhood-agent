@@ -635,20 +635,22 @@ def _csv_rows(text):
 
 
 def test_format_csv_header_and_sections():
-    """CSV has a header and one row per section (summary, day, symbol)."""
+    """CSV has a header and one row per section (summary, best, worst, day, symbol)."""
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
     assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
     body = rows[1:]
-    assert [r[0] for r in body] == ["summary", "day", "symbol", "symbol"]
+    assert [r[0] for r in body] == ["summary", "best", "worst", "day", "symbol", "symbol"]
     assert body[0][1] == "ALL"
-    assert body[1][1] == "2026-10-09"
-    assert [r[1] for r in body[2:]] == ["AAPL", "MSFT"]  # sorted
+    assert body[3][1] == "2026-10-09"
+    assert [r[1] for r in body[4:]] == ["AAPL", "MSFT"]  # sorted
 
 
 def test_format_csv_values_match_stats():
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
-    summary, day, aapl, msft = rows[1:]
+    summary, best, worst, day, aapl, msft = rows[1:]
     assert summary[2:] == ["3", "1", "1", "5.00"]
+    assert best == ["best", "AAPL 2026-10-09", "1", "1", "0", "10.00"]
+    assert worst == ["worst", "AAPL 2026-10-09", "1", "0", "1", "-5.00"]
     assert day[2:] == ["3", "1", "1", "5.00"]
     assert aapl[2:] == ["2", "1", "1", "5.00"]
     assert msft[2:] == ["1", "0", "0", "0.00"]
@@ -724,3 +726,77 @@ def test_cmd_stats_json_and_csv_conflict_exits_2():
         assert e.code == 2
     else:
         raise AssertionError("expected SystemExit(2) for --json + --csv")
+
+
+def test_best_worst_trade_basics():
+    """Best/worst realized trades carry symbol, date, and pnl."""
+    stats = compute_stats(FIXTURE)
+    assert stats["best_trade"] == {"symbol": "AAPL", "date": "2026-10-09",
+                                   "pnl": 10.0}
+    assert stats["worst_trade"] == {"symbol": "AAPL", "date": "2026-10-09",
+                                    "pnl": -5.0}
+
+
+def test_best_worst_trade_tie_first_wins():
+    """Ties keep the first trade, like the drawdown window does."""
+    trades = [
+        trade("2026-10-09T09:31:00", "AAPL", "buy", 1, 200.0, 10.0),
+        trade("2026-10-09T10:31:00", "MSFT", "buy", 1, 400.0, 10.0),
+        trade("2026-10-09T11:31:00", "TSLA", "buy", 1, 300.0, -10.0),
+        trade("2026-10-09T12:31:00", "NVDA", "buy", 1, 150.0, -10.0),
+    ]
+    stats = compute_stats(trades)
+    assert stats["best_trade"]["symbol"] == "AAPL"
+    assert stats["worst_trade"]["symbol"] == "TSLA"
+
+
+def test_best_worst_trade_none_when_no_realized():
+    """Zero-pnl-only journals have no best/worst trade."""
+    trades = [trade("2026-10-09T09:31:00", "AAPL", "buy", 1, 200.0, 0.0)]
+    stats = compute_stats(trades)
+    assert stats["best_trade"] is None
+    assert stats["worst_trade"] is None
+    out = format_report(stats)
+    assert "  Best trade:         n/a" in out
+    assert "  Worst trade:        n/a" in out
+    rows = _csv_rows(format_csv(stats))
+    sections = [r[0] for r in rows[1:]]
+    assert "best" not in sections and "worst" not in sections
+
+
+def test_best_worst_trade_undated():
+    """A trade with no date still reports, marked undated."""
+    t = trade("2026-10-09T09:31:00", "AAPL", "buy", 1, 200.0, 10.0)
+    del t["date"]
+    stats = compute_stats([t])
+    assert stats["best_trade"] == {"symbol": "AAPL", "date": None,
+                                   "pnl": 10.0}
+    out = format_report(stats)
+    assert "Best trade:         $10.00 (AAPL, undated)" in out
+    rows = _csv_rows(format_csv(stats))
+    sections = {r[0]: r for r in rows[1:]}
+    assert sections["best"] == ["best", "AAPL undated", "1", "1", "0", "10.00"]
+    assert sections["worst"] == ["worst", "AAPL undated", "1", "1", "0", "10.00"]
+
+
+def test_best_worst_trade_unknown_symbol_fallback():
+    """Symbol-less trades report as UNKNOWN, like by_symbol does."""
+    t = trade("2026-10-09T09:31:00", "AAPL", "buy", 1, 200.0, 10.0)
+    del t["symbol"]
+    stats = compute_stats([t])
+    assert stats["best_trade"]["symbol"] == "UNKNOWN"
+
+
+def test_format_report_best_worst_lines():
+    out = format_report(compute_stats(FIXTURE))
+    assert "  Best trade:         $10.00 (AAPL, 2026-10-09)" in out
+    assert "  Worst trade:        $-5.00 (AAPL, 2026-10-09)" in out
+
+
+def test_format_json_carries_best_worst():
+    payload = json.loads(format_json(compute_stats(FIXTURE)))
+    assert payload["stats"]["best_trade"]["pnl"] == 10.0
+    assert payload["stats"]["worst_trade"]["pnl"] == -5.0
+    empty = json.loads(format_json(compute_stats([])))
+    assert empty["stats"]["best_trade"] is None
+    assert empty["stats"]["worst_trade"] is None
