@@ -19,6 +19,7 @@ from paper_stats import (
     merge_trades,
     normalize_symbols,
     parse_iso_date,
+    resolve_days_range,
 )
 
 
@@ -800,3 +801,48 @@ def test_format_json_carries_best_worst():
     empty = json.loads(format_json(compute_stats([])))
     assert empty["stats"]["best_trade"] is None
     assert empty["stats"]["worst_trade"] is None
+
+
+def test_resolve_days_range():
+    from datetime import date as _d, timedelta as _td
+    today = _d.today().isoformat()
+    assert resolve_days_range(1) == (today, today)
+    assert resolve_days_range("1") == (today, today)
+    f, t = resolve_days_range("7")
+    assert t == today
+    assert f == (_d.today() - _td(days=6)).isoformat()
+    f, t = resolve_days_range(30)
+    assert t == today
+    assert f == (_d.today() - _td(days=29)).isoformat()
+
+
+def test_resolve_days_range_bad_values():
+    for bad in ("0", "00", "-3", "abc", "1.5", "7 days", "", "  ", None, "007x"):
+        try:
+            resolve_days_range(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad!r}")
+
+
+def test_resolve_days_range_window_filters_trades():
+    # --days window used as (date_from, date_to) filters MULTI_DAY correctly:
+    # keep only trades in the last 2 days ending today.
+    from datetime import date as _d, timedelta as _td
+    today = _d.today()
+    rows = [
+        {**trade("09:31:00", "OLD", "buy", 1, 1.0, 0.0),
+         "date": (today - _td(days=10)).isoformat()},
+        {**trade("09:31:00", "YEST", "buy", 1, 1.0, 5.0),
+         "date": (today - _td(days=1)).isoformat()},
+        {**trade("09:31:00", "NOW", "buy", 1, 1.0, 10.0),
+         "date": today.isoformat()},
+    ]
+    date_from, date_to = resolve_days_range(2)
+    kept, und = filter_trades_by_date(rows, date_from, date_to)
+    assert und == 0
+    assert [t["symbol"] for t in kept] == ["YEST", "NOW"]
+    stats = compute_stats(rows, date_from=date_from, date_to=date_to)
+    assert stats["trades"] == 2
+    assert stats["best_trade"]["symbol"] == "NOW"

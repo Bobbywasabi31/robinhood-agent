@@ -9,7 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats [--json|--csv] [--from DATE] [--to DATE] [--symbols A,B]   Paper-journal stats
+  stats [--json|--csv] [--from DATE] [--to DATE] [--days N] [--symbols A,B]   Paper-journal stats
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -235,6 +235,8 @@ def cmd_stats(guards, as_json=False, as_csv=False, date_from=None, date_to=None,
     as_json prints the same stats as machine-readable JSON instead of text;
     as_csv prints the daily + per-symbol P&L tables as CSV instead of text.
     date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
+    days (positive int): shortcut for the last N days ending today — fills
+    any bound an explicit --from/--to doesn't set.
     symbols ("AAPL,MSFT", case-insensitive) restricts to those tickers.
     """
     from paper_stats import (
@@ -307,9 +309,25 @@ def main():
         return
     if cmd == "stats":
         rest = sys.argv[2:]
+        date_from = _flag_value(rest, "--from")
+        date_to = _flag_value(rest, "--to")
+        days = _flag_value(rest, "--days")
+        if days is not None:
+            from paper_stats import resolve_days_range
+            try:
+                days_from, days_to = resolve_days_range(days)
+            except ValueError as e:
+                print(f"stats: {e}", file=sys.stderr)
+                sys.exit(2)
+            # --days supplies the window; an explicit --from/--to wins
+            # the matching bound.
+            if date_from is None:
+                date_from = days_from
+            if date_to is None:
+                date_to = days_to
         cmd_stats(guards, as_json="--json" in rest, as_csv="--csv" in rest,
-                  date_from=_flag_value(rest, "--from"),
-                  date_to=_flag_value(rest, "--to"),
+                  date_from=date_from,
+                  date_to=date_to,
                   symbols=_flag_value(rest, "--symbols"))
         return
     if cmd == "tools":

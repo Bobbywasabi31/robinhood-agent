@@ -46,6 +46,7 @@ python3 agent.py stats              # paper-journal stats: win rate, avg win/los
 python3 agent.py stats --json     # same stats as machine-readable JSON (for other tools/AIs)
 python3 agent.py stats --csv      # daily + per-symbol P&L as CSV (spreadsheets, pandas)
 python3 agent.py stats --from 2026-10-01 --to 2026-10-07   # restrict to a date range (inclusive, YYYY-MM-DD)
+python3 agent.py stats --days 7        # last 7 days incl. today (shortcut; explicit --from/--to wins)
 python3 agent.py stats --symbols AAPL,MSFT   # restrict to specific tickers (case-insensitive)
 ```
 

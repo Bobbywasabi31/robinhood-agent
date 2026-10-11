@@ -18,7 +18,8 @@ import csv
 import io
 import json
 import os
-from datetime import date as _date
+import re
+from datetime import date as _date, timedelta as _timedelta
 
 APPEND_JOURNAL_FILENAME = "paper_journal.jsonl"
 
@@ -99,6 +100,24 @@ def parse_iso_date(value):
         return _date.fromisoformat(s)
     except ValueError:
         raise ValueError(f"not a YYYY-MM-DD date: {value!r}")
+
+
+def resolve_days_range(days):
+    """Resolve a `stats --days N` value into (date_from, date_to) ISO strings.
+
+    The window is the last N days ending today, both bounds inclusive:
+    N=1 means today only, N=7 covers today and the six days before it.
+    Accepts an int or a CLI string; anything that isn't a positive whole
+    number raises ValueError.
+    """
+    s = "" if days is None else str(days).strip()
+    if not re.fullmatch(r"[0-9]+", s):
+        raise ValueError(f"not a positive whole number of days: {days!r}")
+    n = int(s)
+    if n < 1:
+        raise ValueError(f"not a positive whole number of days: {days!r}")
+    today = _date.today()
+    return (today - _timedelta(days=n - 1)).isoformat(), today.isoformat()
 
 
 def _trade_date(trade):
