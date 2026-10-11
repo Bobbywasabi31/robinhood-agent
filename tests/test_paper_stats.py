@@ -253,6 +253,68 @@ def test_by_day_empty_and_undated():
     assert s["by_day"]["undated"] == {"trades": 1, "pnl": 7.0, "wins": 1, "losses": 0}
 
 
+def test_by_month_groups_pnl_per_calendar_month():
+    trades = [
+        trade_on("2026-09-29", "2026-09-29T14:00:00", "AAPL", "buy", 1, 200.0, -5.0),
+        trade_on("2026-09-30", "2026-09-30T15:00:00", "AAPL", "sell", 1, 210.0, 8.0),
+        trade_on("2026-10-01", "2026-10-01T09:31:00", "AAPL", "buy", 1, 205.0, 4.0),
+    ]
+    by = compute_stats(trades)["by_month"]
+    assert by["2026-09"] == {"trades": 2, "pnl": 3.0, "wins": 1, "losses": 1}
+    assert by["2026-10"] == {"trades": 1, "pnl": 4.0, "wins": 1, "losses": 0}
+
+
+def test_by_month_empty_and_undated():
+    assert compute_stats([])["by_month"] == {}
+    t = trade("2026-10-09T10:00:00", "MSFT", "buy", 1, 400.0, 7.0)
+    del t["date"]
+    s = compute_stats([t])
+    assert s["by_month"]["undated"] == {"trades": 1, "pnl": 7.0, "wins": 1, "losses": 0}
+
+
+def test_by_month_unparseable_date_counts_as_undated():
+    t = trade_on("garbage", "2026-10-09T10:00:00", "MSFT", "buy", 1, 400.0, 2.0)
+    s = compute_stats([t])
+    assert s["by_month"]["undated"]["trades"] == 1
+
+
+def test_format_report_includes_monthly_pnl():
+    trades = [
+        trade_on("2026-09-30", "2026-09-30T15:00:00", "AAPL", "sell", 1, 210.0, 8.0),
+        trade_on("2026-10-01", "2026-10-01T09:31:00", "AAPL", "buy", 1, 205.0, 4.0),
+    ]
+    report = format_report(compute_stats(trades))
+    assert "Monthly P&L:" in report
+    # Months sort chronologically (ISO YYYY-MM strings).
+    assert report.index("2026-09: $8.00") < report.index("2026-10: $4.00")
+    assert "2026-09: $8.00 over 1 trades (1W/0L)" in report
+    assert "2026-10: $4.00 over 1 trades (1W/0L)" in report
+
+
+def test_by_month_json_and_csv_carry():
+    trades = [
+        trade_on("2026-09-30", "2026-09-30T15:00:00", "AAPL", "sell", 1, 210.0, 8.0),
+        trade_on("2026-10-01", "2026-10-01T09:31:00", "AAPL", "buy", 1, 205.0, 4.0),
+    ]
+    s = compute_stats(trades)
+    payload = json.loads(format_json(s))
+    assert payload["stats"]["by_month"]["2026-09"]["pnl"] == 8.0
+    csv_lines = format_csv(s).strip().splitlines()
+    month_rows = [ln for ln in csv_lines if ln.startswith("month,")]
+    assert month_rows[0] == "month,2026-09,1,1,0,8.00"
+    assert month_rows[1] == "month,2026-10,1,1,0,4.00"
+
+
+def test_by_day_unchanged_by_bucket_refactor():
+    # _bucket_stats refactor must not alter by_day aggregation behavior.
+    trades = [
+        trade_on("2026-10-09", "2026-10-09T14:00:00", "AAPL", "buy", 1, 200.0, -5.0),
+        trade_on("2026-10-09", "2026-10-09T15:00:00", "AAPL", "sell", 1, 210.0, 8.0),
+    ]
+    by = compute_stats(trades)["by_day"]
+    assert by["2026-10-09"] == {"trades": 2, "pnl": 3.0, "wins": 1, "losses": 1}
+
+
 def test_format_report_includes_daily_pnl():
     trades = [
         trade_on("2026-10-09", "2026-10-09T14:00:00", "AAPL", "buy", 1, 200.0, -5.0),
@@ -636,25 +698,26 @@ def _csv_rows(text):
 
 
 def test_format_csv_header_and_sections():
-    """CSV has a header and one row per section (summary, best, worst, streak, day, symbol)."""
+    """CSV has a header and one row per section (summary, best, worst, streak, day, month, symbol)."""
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
     assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
     body = rows[1:]
     assert [r[0] for r in body] == [
         "summary", "best", "worst",
         "streak", "streak", "streak",  # longest_win, longest_loss, current_loss
-        "day", "symbol", "symbol",
+        "day", "month", "symbol", "symbol",
     ]
     assert body[0][1] == "ALL"
     assert body[3][1] == "longest_win"
     assert body[6][1] == "2026-10-09"
-    assert [r[1] for r in body[7:]] == ["AAPL", "MSFT"]  # sorted
+    assert body[7] == ["month", "2026-10", "3", "1", "1", "5.00"]
+    assert [r[1] for r in body[8:]] == ["AAPL", "MSFT"]  # sorted
 
 
 def test_format_csv_values_match_stats():
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
     (summary, best, worst, streak_win, streak_loss, streak_cur,
-     day, aapl, msft) = rows[1:]
+     day, month, aapl, msft) = rows[1:]
     assert summary[2:] == ["3", "1", "1", "5.00"]
     assert best == ["best", "AAPL 2026-10-09", "1", "1", "0", "10.00"]
     assert worst == ["worst", "AAPL 2026-10-09", "1", "0", "1", "-5.00"]
@@ -662,6 +725,7 @@ def test_format_csv_values_match_stats():
     assert streak_loss == ["streak", "longest_loss", "1", "0", "1", ""]
     assert streak_cur == ["streak", "current_loss", "1", "0", "1", ""]
     assert day[2:] == ["3", "1", "1", "5.00"]
+    assert month == ["month", "2026-10", "3", "1", "1", "5.00"]
     assert aapl[2:] == ["2", "1", "1", "5.00"]
     assert msft[2:] == ["1", "0", "0", "0.00"]
 

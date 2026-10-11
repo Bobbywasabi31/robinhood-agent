@@ -192,6 +192,29 @@ def filter_trades_by_symbols(trades, symbols=None):
     return kept, excluded
 
 
+def _bucket_stats(trades, key_fn):
+    """Shared day/month bucketing: trades, pnl, wins, losses per key."""
+    buckets = {}
+    for t in trades:
+        key = key_fn(t)
+        pnl = t.get("pnl") or 0
+        row = buckets.setdefault(
+            key, {"trades": 0, "pnl": 0.0, "wins": 0, "losses": 0})
+        row["trades"] += 1
+        row["pnl"] = round(row["pnl"] + pnl, 2)
+        if pnl > 0:
+            row["wins"] += 1
+        elif pnl < 0:
+            row["losses"] += 1
+    return buckets
+
+
+def _month_key(trade):
+    """Calendar-month bucket (YYYY-MM) for a trade; undated when no date."""
+    d = _trade_date(trade)
+    return d.strftime("%Y-%m") if d else "undated"
+
+
 def compute_stats(trades, date_from=None, date_to=None, symbols=None):
     """Crunch a trade list into a stats dict. Pure — no I/O."""
     trades, undated_excluded = filter_trades_by_date(trades, date_from, date_to)
@@ -207,18 +230,10 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
     losses = [p for p in realized if p < 0]
 
     # Per-day realized P&L (the append-only journal spans days).
-    by_day = {}
-    for t in trades:
-        day = t.get("date") or "undated"
-        pnl = t.get("pnl") or 0
-        row = by_day.setdefault(
-            day, {"trades": 0, "pnl": 0.0, "wins": 0, "losses": 0})
-        row["trades"] += 1
-        row["pnl"] = round(row["pnl"] + pnl, 2)
-        if pnl > 0:
-            row["wins"] += 1
-        elif pnl < 0:
-            row["losses"] += 1
+    by_day = _bucket_stats(trades, lambda t: (t.get("date") or "undated"))
+
+    # Per-month realized P&L (one row per calendar month, YYYY-MM).
+    by_month = _bucket_stats(trades, _month_key)
 
     # Per-symbol realized P&L (win/loss counts per ticker).
     by_symbol = {}
@@ -321,6 +336,7 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         "positions": positions,
         "by_symbol": by_symbol,
         "by_day": by_day,
+        "by_month": by_month,
         "max_drawdown": round(max_dd, 2),
         "max_drawdown_start": dd_start.isoformat() if dd_start else None,
         "max_drawdown_end": dd_end.isoformat() if dd_end else None,
@@ -397,6 +413,12 @@ def format_report(stats):
         f"  Gross notional:     {money(stats['gross_notional'])}",
         f"  Open exposure:      {money(stats['open_exposure'])}",
     ]
+    if stats["by_month"]:
+        lines.append("  Monthly P&L:")
+        for month in sorted(stats["by_month"]):
+            row = stats["by_month"][month]
+            wl = f"({row['wins']}W/{row['losses']}L)"
+            lines.append(f"    {month}: {money(row['pnl'])} over {row['trades']} trades {wl}")
     if stats["by_day"]:
         lines.append("  Daily P&L:")
         for day in sorted(stats["by_day"]):
@@ -435,7 +457,8 @@ def format_csv(stats):
     numbers (no $ or thousands separators) so the file parses cleanly.
     Sections: summary (overall totals), best/worst (the extreme single
     trades), streak (longest win/loss streaks and the current one), day
-    (one row per day, sorted), symbol (one row per ticker, sorted).
+    (one row per day, sorted), month (one row per calendar month, sorted),
+    symbol (one row per ticker, sorted).
     Empty breakdowns produce no rows, never an error.
     """
     buf = io.StringIO()
@@ -462,6 +485,10 @@ def format_csv(stats):
     for day in sorted(stats["by_day"]):
         row = stats["by_day"][day]
         writer.writerow(["day", day, row["trades"], row["wins"],
+                         row["losses"], f"{row['pnl']:.2f}"])
+    for month in sorted(stats["by_month"]):
+        row = stats["by_month"][month]
+        writer.writerow(["month", month, row["trades"], row["wins"],
                          row["losses"], f"{row['pnl']:.2f}"])
     for sym in sorted(stats["by_symbol"]):
         row = stats["by_symbol"][sym]

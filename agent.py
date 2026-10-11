@@ -233,7 +233,7 @@ def cmd_stats(guards, as_json=False, as_csv=False, date_from=None, date_to=None,
     Merges the append-only journal (long-term history) with today's state file
     (which rolls daily) so stats survive midnight; duplicates are dropped.
     as_json prints the same stats as machine-readable JSON instead of text;
-    as_csv prints the daily + per-symbol P&L tables as CSV instead of text.
+    as_csv prints the daily + monthly + per-symbol P&L tables as CSV instead of text.
     date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
     days (positive int): shortcut for the last N days ending today — fills
     any bound an explicit --from/--to doesn't set.
