@@ -636,22 +636,31 @@ def _csv_rows(text):
 
 
 def test_format_csv_header_and_sections():
-    """CSV has a header and one row per section (summary, best, worst, day, symbol)."""
+    """CSV has a header and one row per section (summary, best, worst, streak, day, symbol)."""
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
     assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
     body = rows[1:]
-    assert [r[0] for r in body] == ["summary", "best", "worst", "day", "symbol", "symbol"]
+    assert [r[0] for r in body] == [
+        "summary", "best", "worst",
+        "streak", "streak", "streak",  # longest_win, longest_loss, current_loss
+        "day", "symbol", "symbol",
+    ]
     assert body[0][1] == "ALL"
-    assert body[3][1] == "2026-10-09"
-    assert [r[1] for r in body[4:]] == ["AAPL", "MSFT"]  # sorted
+    assert body[3][1] == "longest_win"
+    assert body[6][1] == "2026-10-09"
+    assert [r[1] for r in body[7:]] == ["AAPL", "MSFT"]  # sorted
 
 
 def test_format_csv_values_match_stats():
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
-    summary, best, worst, day, aapl, msft = rows[1:]
+    (summary, best, worst, streak_win, streak_loss, streak_cur,
+     day, aapl, msft) = rows[1:]
     assert summary[2:] == ["3", "1", "1", "5.00"]
     assert best == ["best", "AAPL 2026-10-09", "1", "1", "0", "10.00"]
     assert worst == ["worst", "AAPL 2026-10-09", "1", "0", "1", "-5.00"]
+    assert streak_win == ["streak", "longest_win", "1", "1", "0", ""]
+    assert streak_loss == ["streak", "longest_loss", "1", "0", "1", ""]
+    assert streak_cur == ["streak", "current_loss", "1", "0", "1", ""]
     assert day[2:] == ["3", "1", "1", "5.00"]
     assert aapl[2:] == ["2", "1", "1", "5.00"]
     assert msft[2:] == ["1", "0", "0", "0.00"]
@@ -662,6 +671,8 @@ def test_format_csv_money_is_plain_decimal():
     trades = [trade("2026-10-09T09:31:00", "AAPL", "buy", 10, 200.0, 1234.56)]
     rows = _csv_rows(format_csv(compute_stats(trades)))
     for row in rows[1:]:
+        if row[0] == "streak":
+            continue  # streak rows carry counts, not money
         assert row[5] == "1234.56"  # not "1,234.56" or "$1,234.56"
         assert float(row[5]) == 1234.56
 
@@ -669,9 +680,10 @@ def test_format_csv_money_is_plain_decimal():
 def test_format_csv_empty_stats_is_valid():
     rows = _csv_rows(format_csv(compute_stats([])))
     assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
-    assert len(rows) == 2  # header + summary row, no day/symbol rows
+    assert len(rows) == 4  # header + summary + longest_win/longest_loss streak rows
     assert rows[1][:2] == ["summary", "ALL"]
     assert rows[1][2:] == ["0", "0", "0", "0.00"]
+    assert [r[1] for r in rows[2:]] == ["longest_win", "longest_loss"]
 
 
 def test_cmd_stats_csv_end_to_end():
@@ -846,3 +858,87 @@ def test_resolve_days_range_window_filters_trades():
     stats = compute_stats(rows, date_from=date_from, date_to=date_to)
     assert stats["trades"] == 2
     assert stats["best_trade"]["symbol"] == "NOW"
+
+
+def test_streaks_basics():
+    # W W L W W L -> longest win 2, longest loss 1, current loss 1
+    rows = [
+        trade("09:00:00", "A", "buy", 1, 1.0, 5.0),
+        trade("09:10:00", "A", "buy", 1, 1.0, 3.0),
+        trade("09:20:00", "A", "buy", 1, 1.0, -2.0),
+        trade("09:30:00", "A", "buy", 1, 1.0, 4.0),
+        trade("09:40:00", "A", "buy", 1, 1.0, 1.0),
+        trade("09:50:00", "A", "buy", 1, 1.0, -7.0),
+    ]
+    s = compute_stats(rows)
+    assert s["longest_win_streak"] == 2
+    assert s["longest_loss_streak"] == 1
+    assert s["current_streak"] == {"type": "loss", "length": 1}
+
+
+def test_streaks_flat_trades_neither_advance_nor_break():
+    # W flat flat W -> longest win 2, current win 2
+    rows = [
+        trade("09:00:00", "A", "buy", 1, 1.0, 5.0),
+        trade("09:10:00", "A", "buy", 1, 1.0, 0.0),
+        trade("09:20:00", "A", "buy", 1, 1.0, 0.0),
+        trade("09:30:00", "A", "buy", 1, 1.0, 3.0),
+    ]
+    s = compute_stats(rows)
+    assert s["longest_win_streak"] == 2
+    assert s["longest_loss_streak"] == 0
+    assert s["current_streak"] == {"type": "win", "length": 2}
+
+
+def test_streaks_no_realized_trades():
+    s = compute_stats([trade("09:00:00", "A", "buy", 1, 1.0, 0.0)])
+    assert s["longest_win_streak"] == 0
+    assert s["longest_loss_streak"] == 0
+    assert s["current_streak"] is None
+    out = format_report(s)
+    assert "  Longest win streak: W0" in out
+    assert "  Current streak:     n/a" in out
+
+
+def test_streaks_report_lines():
+    rows = [
+        trade("09:00:00", "A", "buy", 1, 1.0, 5.0),
+        trade("09:10:00", "A", "buy", 1, 1.0, 3.0),
+        trade("09:20:00", "A", "buy", 1, 1.0, -2.0),
+        trade("09:30:00", "A", "buy", 1, 1.0, -1.0),
+        trade("09:40:00", "A", "buy", 1, 1.0, -4.0),
+    ]
+    out = format_report(compute_stats(rows))
+    assert "  Longest win streak: W2" in out
+    assert "  Longest loss streak:L3" in out
+    assert "  Current streak:     L3" in out
+
+
+def test_streaks_json_and_csv_carry():
+    rows = [
+        trade("09:00:00", "A", "buy", 1, 1.0, 5.0),
+        trade("09:10:00", "A", "buy", 1, 1.0, 3.0),
+        trade("09:20:00", "A", "buy", 1, 1.0, -2.0),
+    ]
+    s = compute_stats(rows)
+    payload = json.loads(format_json(s))
+    assert payload["stats"]["longest_win_streak"] == 2
+    assert payload["stats"]["current_streak"] == {"type": "loss", "length": 1}
+    csv_lines = format_csv(s).strip().splitlines()
+    streak_rows = [ln for ln in csv_lines if ln.startswith("streak,")]
+    assert streak_rows[0] == "streak,longest_win,2,2,0,"
+    assert streak_rows[1] == "streak,longest_loss,1,0,1,"
+    assert streak_rows[2] == "streak,current_loss,1,0,1,"
+
+
+def test_streaks_follow_date_then_time_sort():
+    # The later-day loss sorts after the earlier-day wins even though its
+    # clock time is between them.
+    rows = [
+        {**trade("10:00:00", "A", "buy", 1, 1.0, -2.0), "date": "2026-10-10"},
+        {**trade("09:00:00", "A", "buy", 1, 1.0, 5.0), "date": "2026-10-09"},
+        {**trade("09:30:00", "A", "buy", 1, 1.0, 3.0), "date": "2026-10-09"},
+    ]
+    s = compute_stats(rows)
+    assert s["longest_win_streak"] == 2
+    assert s["current_streak"] == {"type": "loss", "length": 1}

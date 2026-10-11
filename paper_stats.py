@@ -284,6 +284,26 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
     gross_win = round(sum(wins), 2)
     gross_loss = round(-sum(losses), 2)
     denom = len(wins) + len(losses)
+
+    # Win/loss streaks over realized trades in chronological order. Only
+    # settled trades (pnl != 0) count: a flat trade neither advances nor
+    # breaks a streak.
+    longest_win, longest_loss, cur_win, cur_loss = 0, 0, 0, 0
+    for p in pnl_values:
+        if p > 0:
+            cur_win += 1
+            cur_loss = 0
+            longest_win = max(longest_win, cur_win)
+        elif p < 0:
+            cur_loss += 1
+            cur_win = 0
+            longest_loss = max(longest_loss, cur_loss)
+    current_streak = (
+        {"type": "win", "length": cur_win} if cur_win
+        else {"type": "loss", "length": cur_loss} if cur_loss
+        else None
+    )
+
     return {
         "trades": n,
         "realized_trades": len(realized),
@@ -307,6 +327,9 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         "max_drawdown_days": dd_days,
         "best_trade": best_trade,
         "worst_trade": worst_trade,
+        "longest_win_streak": longest_win,
+        "longest_loss_streak": longest_loss,
+        "current_streak": current_streak,
         "date_from": date_from,
         "date_to": date_to,
         "undated_excluded": undated_excluded,
@@ -325,6 +348,12 @@ def format_report(stats):
             return f"  {label:<20}n/a"
         day = trade["date"] or "undated"
         return f"  {label:<20}{money(trade['pnl'])} ({trade['symbol']}, {day})"
+
+    def streak_str(streak):
+        if streak is None:
+            return "n/a"
+        letter = {"win": "W", "loss": "L"}[streak["type"]]
+        return f"{letter}{streak['length']}"
 
     win_rate = "n/a" if stats["win_rate"] is None else f"{stats['win_rate'] * 100:.1f}%"
     profit_factor = "n/a" if stats["profit_factor"] is None else str(stats["profit_factor"])
@@ -360,6 +389,9 @@ def format_report(stats):
         f"  Profit factor:      {profit_factor}",
         extreme_line("Best trade:", stats["best_trade"]),
         extreme_line("Worst trade:", stats["worst_trade"]),
+        f"  Longest win streak: W{stats['longest_win_streak']}",
+        f"  Longest loss streak:L{stats['longest_loss_streak']}",
+        f"  Current streak:     {streak_str(stats['current_streak'])}",
         f"  Total P&L:          {money(stats['total_pnl'])}",
         dd_line,
         f"  Gross notional:     {money(stats['gross_notional'])}",
@@ -402,8 +434,9 @@ def format_csv(stats):
     Columns: section,key,trades,wins,losses,pnl. Money is plain decimal
     numbers (no $ or thousands separators) so the file parses cleanly.
     Sections: summary (overall totals), best/worst (the extreme single
-    trades), day (one row per day, sorted), symbol (one row per ticker,
-    sorted). Empty breakdowns produce no rows, never an error.
+    trades), streak (longest win/loss streaks and the current one), day
+    (one row per day, sorted), symbol (one row per ticker, sorted).
+    Empty breakdowns produce no rows, never an error.
     """
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -418,6 +451,14 @@ def format_csv(stats):
             writer.writerow([section, f"{trade['symbol']} {day}", 1,
                              1 if pnl > 0 else 0, 1 if pnl < 0 else 0,
                              f"{pnl:.2f}"])
+    lw, ll = stats["longest_win_streak"], stats["longest_loss_streak"]
+    writer.writerow(["streak", "longest_win", lw, lw, 0, ""])
+    writer.writerow(["streak", "longest_loss", ll, 0, ll, ""])
+    cur = stats["current_streak"]
+    if cur:
+        w = cur["length"] if cur["type"] == "win" else 0
+        writer.writerow(["streak", f"current_{cur['type']}", cur["length"],
+                         w, cur["length"] - w, ""])
     for day in sorted(stats["by_day"]):
         row = stats["by_day"][day]
         writer.writerow(["day", day, row["trades"], row["wins"],
