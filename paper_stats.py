@@ -3,7 +3,8 @@
 Paper-journal stats report — read-only analysis.
 
 Crunches the paper-trading journal into win rate, avg win/loss, open
-exposure, drawdown, and annualized Sharpe and Sortino ratios. The journal is the
+exposure, drawdown, and annualized Sharpe, Sortino, and Calmar ratios.
+The journal is the
 append-only JSONL file
 (paper_journal.jsonl) that Guardrails maintains next to the daily
 .agent_state.json; merging both keeps stats across the daily roll.
@@ -267,6 +268,23 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
             if dvar > 0:
                 sortino_ratio = round(mean / dvar ** 0.5 * 252 ** 0.5, 2)
 
+    # Annualized Calmar ratio: annualized mean daily P&L (mean x 252) over
+    # the max drawdown of the cumulative daily-P&L curve, on the same dated
+    # daily series as Sharpe/Sortino (undated trades excluded). Positive
+    # means the stream earns its worst drawdown back that many times per
+    # year; negative means the stream is losing. None with fewer than 2
+    # dated days or no drawdown at all (dd == 0 has no defined ratio).
+    calmar_ratio = None
+    calmar_days = len(daily_pnls)
+    if len(daily_pnls) >= 2:
+        cum, peak, dd = 0.0, 0.0, 0.0
+        for p in daily_pnls:
+            cum += p
+            peak = max(peak, cum)
+            dd = max(dd, peak - cum)
+        if dd > 0:
+            calmar_ratio = round(sum(daily_pnls) / len(daily_pnls) * 252 / dd, 2)
+
     # Per-symbol realized P&L (win/loss counts per ticker).
     by_symbol = {}
     for t in trades:
@@ -379,6 +397,8 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         "sharpe_days": sharpe_days,
         "sortino_ratio": sortino_ratio,
         "sortino_days": sortino_days,
+        "calmar_ratio": calmar_ratio,
+        "calmar_days": calmar_days,
         "longest_win_streak": longest_win,
         "longest_loss_streak": longest_loss,
         "current_streak": current_streak,
@@ -411,6 +431,7 @@ def format_report(stats):
     profit_factor = "n/a" if stats["profit_factor"] is None else str(stats["profit_factor"])
     sharpe = "n/a" if stats["sharpe_ratio"] is None else f"{stats['sharpe_ratio']:.2f}"
     sortino = "n/a" if stats["sortino_ratio"] is None else f"{stats['sortino_ratio']:.2f}"
+    calmar = "n/a" if stats["calmar_ratio"] is None else f"{stats['calmar_ratio']:.2f}"
     dd_line = f"  Max drawdown:       {money(stats['max_drawdown'])}"
     dd_from, dd_to = stats.get("max_drawdown_start"), stats.get("max_drawdown_end")
     if dd_from and dd_to:
@@ -443,6 +464,7 @@ def format_report(stats):
         f"  Profit factor:      {profit_factor}",
         f"  {'Sharpe ratio (ann):':<20}{sharpe}",
         f"  {'Sortino ratio (ann):':<20}{sortino}",
+        f"  {'Calmar ratio (ann):':<20}{calmar}",
         extreme_line("Best trade:", stats["best_trade"]),
         extreme_line("Worst trade:", stats["worst_trade"]),
         f"  Longest win streak: W{stats['longest_win_streak']}",
@@ -496,9 +518,9 @@ def format_csv(stats):
     Columns: section,key,trades,wins,losses,pnl. Money is plain decimal
     numbers (no $ or thousands separators) so the file parses cleanly.
     Sections: summary (overall totals), best/worst (the extreme single
-    trades), streak (longest win/loss streaks and the current one), risk
-    (annualized Sharpe/Sortino ratios; trades = dated trading days used,
-    pnl = the ratio — no $ involved), day (one row per day, sorted), month (one row
+    trades), streak (longest win/loss streaks and the current one),
+    risk (annualized Sharpe/Sortino/Calmar ratios; trades = dated trading
+    days used, pnl = the ratio — no $ involved), day (one row per day, sorted), month (one row
     per calendar month, sorted), symbol (one row per ticker, sorted).
     Empty breakdowns produce no rows, never an error.
     """
@@ -529,6 +551,9 @@ def format_csv(stats):
     if stats["sortino_ratio"] is not None:
         writer.writerow(["risk", "sortino_ratio_ann", stats["sortino_days"],
                          "", "", f"{stats['sortino_ratio']:.2f}"])
+    if stats["calmar_ratio"] is not None:
+        writer.writerow(["risk", "calmar_ratio_ann", stats["calmar_days"],
+                         "", "", f"{stats['calmar_ratio']:.2f}"])
     for day in sorted(stats["by_day"]):
         row = stats["by_day"][day]
         writer.writerow(["day", day, row["trades"], row["wins"],

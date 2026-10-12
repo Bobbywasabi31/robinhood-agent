@@ -103,7 +103,8 @@ def test_sortino_ratio_json_and_csv_carry():
     lines = format_csv(s).strip().splitlines()
     risk = [ln for ln in lines if ln.startswith("risk,")]
     assert risk == [f"risk,sharpe_ratio_ann,3,,,{s['sharpe_ratio']:.2f}",
-                    f"risk,sortino_ratio_ann,3,,,{s['sortino_ratio']:.2f}"]
+                    f"risk,sortino_ratio_ann,3,,,{s['sortino_ratio']:.2f}",
+                    f"risk,calmar_ratio_ann,3,,,{s['calmar_ratio']:.2f}"]
 
 
 def test_sortino_ratio_csv_omitted_when_undefined():
