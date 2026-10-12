@@ -9,7 +9,8 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats [--json|--csv] [--from DATE] [--to DATE] [--days N] [--symbols A,B]   Paper-journal stats
+  stats [--json|--csv] [--from DATE] [--to DATE] [--days N]
+        [--symbols A,B] [--top N]   Paper-journal stats
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -227,7 +228,7 @@ def extract_order_id(result):
 
 
 def cmd_stats(guards, as_json=False, as_csv=False, date_from=None, date_to=None,
-              symbols=None):
+              symbols=None, top_n=None):
     """Read-only paper-journal stats. Never touches the API or trading logic.
 
     Merges the append-only journal (long-term history) with today's state file
@@ -238,6 +239,8 @@ def cmd_stats(guards, as_json=False, as_csv=False, date_from=None, date_to=None,
     days (positive int): shortcut for the last N days ending today — fills
     any bound an explicit --from/--to doesn't set.
     symbols ("AAPL,MSFT", case-insensitive) restricts to those tickers.
+    top_n (positive int): per-symbol section shows only the top N + bottom N
+    tickers by realized P&L (a leaderboard).
     """
     from paper_stats import (
         compute_stats, default_append_journal_path, format_csv, format_json,
@@ -254,13 +257,17 @@ def cmd_stats(guards, as_json=False, as_csv=False, date_from=None, date_to=None,
     live = [t for t in trades if not t.get("paper")]
     try:
         stats = compute_stats(paper, date_from=date_from, date_to=date_to,
-                              symbols=symbols)
+                              symbols=symbols, top_n=top_n)
     except ValueError as e:
         print(f"stats: bad date: {e}", file=sys.stderr)
         sys.exit(2)
     if as_csv:
         if live:
             print(f"stats: {len(live)} live trade(s) excluded from CSV",
+                  file=sys.stderr)
+        if stats.get("by_symbol_omitted"):
+            print(f"stats: --top {stats['top_n']}: "
+                  f"{stats['by_symbol_omitted']} symbol(s) not shown in CSV",
                   file=sys.stderr)
         print(format_csv(stats), end="")
         return
@@ -271,7 +278,7 @@ def cmd_stats(guards, as_json=False, as_csv=False, date_from=None, date_to=None,
     if live:
         print(f"({len(live)} live trade(s) in the journal — excluded from paper stats.)")
     if not paper:
-        if date_from or date_to or symbols:
+        if date_from or date_to or symbols or top_n:
             print("No paper trades in the journal for those filters.")
         else:
             print("No paper trades in the journal yet.")
@@ -325,10 +332,20 @@ def main():
                 date_from = days_from
             if date_to is None:
                 date_to = days_to
+        top = _flag_value(rest, "--top")
+        top_n = None
+        if top is not None:
+            from paper_stats import resolve_top_n
+            try:
+                top_n = resolve_top_n(top)
+            except ValueError as e:
+                print(f"stats: {e}", file=sys.stderr)
+                sys.exit(2)
         cmd_stats(guards, as_json="--json" in rest, as_csv="--csv" in rest,
                   date_from=date_from,
                   date_to=date_to,
-                  symbols=_flag_value(rest, "--symbols"))
+                  symbols=_flag_value(rest, "--symbols"),
+                  top_n=top_n)
         return
     if cmd == "tools":
         client = get_client()

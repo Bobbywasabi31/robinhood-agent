@@ -122,6 +122,21 @@ def resolve_days_range(days):
     return (today - _timedelta(days=n - 1)).isoformat(), today.isoformat()
 
 
+def resolve_top_n(value):
+    """Resolve a `stats --top N` value into a positive int.
+
+    Accepts an int or a CLI string; anything that isn't a positive whole
+    number raises ValueError.
+    """
+    s = "" if value is None else str(value).strip()
+    if not re.fullmatch(r"[0-9]+", s):
+        raise ValueError(f"not a positive whole number: {value!r}")
+    n = int(s)
+    if n < 1:
+        raise ValueError(f"not a positive whole number: {value!r}")
+    return n
+
+
 def _trade_date(trade):
     """A trade's date, or None when missing/unparseable (never raises)."""
     try:
@@ -217,7 +232,7 @@ def _month_key(trade):
     return d.strftime("%Y-%m") if d else "undated"
 
 
-def compute_stats(trades, date_from=None, date_to=None, symbols=None):
+def compute_stats(trades, date_from=None, date_to=None, symbols=None, top_n=None):
     """Crunch a trade list into a stats dict. Pure — no I/O."""
     trades, undated_excluded = filter_trades_by_date(trades, date_from, date_to)
     wanted = normalize_symbols(symbols)
@@ -300,6 +315,25 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
                 row["wins"] += 1
             else:
                 row["losses"] += 1
+
+    # Per-symbol leaderboard (read-only display filter): keep the top N
+    # gainers and the bottom N by realized P&L. P&L ties break on symbol
+    # name so the cut is deterministic; a symbol in both halves is kept
+    # once. by_symbol_omitted counts the symbols left out.
+    by_symbol_omitted = 0
+    if top_n is not None:
+        if not isinstance(top_n, int) or top_n < 1:
+            raise ValueError(f"--top must be a positive whole number, got {top_n!r}")
+        gainers = sorted(by_symbol.items(),
+                         key=lambda kv: (-kv[1]["pnl"], kv[0]))[:top_n]
+        losers = sorted(by_symbol.items(),
+                        key=lambda kv: (kv[1]["pnl"], kv[0]))[:top_n]
+        keep = []
+        for sym, _ in gainers + losers:
+            if sym not in keep:
+                keep.append(sym)
+        by_symbol_omitted = len(by_symbol) - len(keep)
+        by_symbol = {sym: by_symbol[sym] for sym in keep}
 
     # Open exposure: net quantity per symbol at last traded price.
     net_qty, last_price = {}, {}
@@ -407,7 +441,24 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None):
         "undated_excluded": undated_excluded,
         "symbols": wanted,
         "symbol_excluded": symbol_excluded,
+        "top_n": top_n,
+        "by_symbol_omitted": by_symbol_omitted,
     }
+
+
+def _symbol_order(stats):
+    """Symbol display order for the per-symbol section.
+
+    Plain stats list symbols alphabetically; with --top N the section is a
+    leaderboard, so symbols come best-to-worst by realized P&L (ties break
+    on symbol name, mirroring the compute_stats cut).
+    """
+    syms = list(stats["by_symbol"])
+    if stats.get("top_n"):
+        syms.sort(key=lambda s: (-stats["by_symbol"][s]["pnl"], s))
+    else:
+        syms.sort()
+    return syms
 
 
 def format_report(stats):
@@ -488,11 +539,18 @@ def format_report(stats):
             wl = f"({row['wins']}W/{row['losses']}L)"
             lines.append(f"    {day}: {money(row['pnl'])} over {row['trades']} trades {wl}")
     if stats["by_symbol"]:
-        lines.append("  Per-symbol P&L:")
-        for sym in sorted(stats["by_symbol"]):
+        if stats.get("top_n"):
+            n = stats["top_n"]
+            lines.append(f"  Per-symbol P&L (top {n} + bottom {n} by realized P&L):")
+        else:
+            lines.append("  Per-symbol P&L:")
+        for sym in _symbol_order(stats):
             row = stats["by_symbol"][sym]
             wl = f"({row['wins']}W/{row['losses']}L)"
             lines.append(f"    {sym}: {money(row['pnl'])} over {row['trades']} trades {wl}")
+        if stats.get("by_symbol_omitted"):
+            lines.append(f"    ... {stats['by_symbol_omitted']} symbol(s) "
+                         f"between top/bottom {stats['top_n']} not shown")
     if stats["positions"]:
         lines.append("  Open positions:")
         for sym in sorted(stats["positions"]):
@@ -562,7 +620,7 @@ def format_csv(stats):
         row = stats["by_month"][month]
         writer.writerow(["month", month, row["trades"], row["wins"],
                          row["losses"], f"{row['pnl']:.2f}"])
-    for sym in sorted(stats["by_symbol"]):
+    for sym in _symbol_order(stats):
         row = stats["by_symbol"][sym]
         writer.writerow(["symbol", sym, row["trades"], row["wins"],
                          row["losses"], f"{row['pnl']:.2f}"])
