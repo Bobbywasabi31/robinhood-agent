@@ -10,7 +10,7 @@ Commands:
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
   stats [--json|--csv|--trades|--equity] [--from DATE] [--to DATE] [--days N]
-        [--symbols A,B] [--top N]   Paper-journal stats
+        [--symbols A,B] [--top N] [--help]   Paper-journal stats
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -330,12 +330,58 @@ def cmd_journal(guards):
                   f"{t['symbol']} @ ${t['price']:.2f}")
 
 
-def _flag_value(args, *names):
-    """Value of the first matching --flag in args, or None."""
-    for i, a in enumerate(args):
-        if a in names and i + 1 < len(args):
-            return args[i + 1]
-    return None
+
+
+STATS_SWITCH_FLAGS = ("--json", "--csv", "--trades", "--equity")
+STATS_VALUE_FLAGS = ("--from", "--to", "--days", "--symbols", "--top")
+
+STATS_USAGE = """\
+Usage: python3 agent.py stats [options]
+
+Read-only paper-journal stats. Never touches the API or trading logic.
+
+  --from YYYY-MM-DD   restrict to a date range (inclusive)
+  --to YYYY-MM-DD     restrict to a date range (inclusive)
+  --days N            last N days incl. today (explicit --from/--to wins)
+  --symbols A,B       restrict to specific tickers (case-insensitive)
+  --top N             per-symbol leaderboard: top N + bottom N tickers
+  --json              machine-readable JSON instead of the text report
+  --csv               daily + monthly + per-symbol P&L as CSV
+  --trades            one CSV row per paper trade
+  --equity            daily equity curve as CSV
+  --help, -h          show this help
+"""
+
+
+class StatsUsageError(ValueError):
+    """Unknown or malformed stats flag."""
+
+
+def parse_stats_args(args):
+    """Split a stats argv tail into (flags, values, help_requested).
+
+    flags: set of switch flags present; values: value-flag -> following
+    token (None when the flag trails with nothing after it).
+    Raises StatsUsageError on any unknown -/-- token, so a typo'd flag
+    fails loudly instead of being silently ignored.
+    """
+    flags = set()
+    values = {}
+    help_requested = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--help", "-h"):
+            help_requested = True
+        elif a in STATS_SWITCH_FLAGS:
+            flags.add(a)
+        elif a in STATS_VALUE_FLAGS:
+            values[a] = args[i + 1] if i + 1 < len(args) else None
+            i += 1
+        elif a.startswith("-") and a != "-":
+            raise StatsUsageError(f"unknown flag: {a}")
+        i += 1
+    return flags, values, help_requested
 
 
 def main():
@@ -350,9 +396,18 @@ def main():
         return
     if cmd == "stats":
         rest = sys.argv[2:]
-        date_from = _flag_value(rest, "--from")
-        date_to = _flag_value(rest, "--to")
-        days = _flag_value(rest, "--days")
+        try:
+            flags, values, show_help = parse_stats_args(rest)
+        except StatsUsageError as e:
+            print(f"stats: {e}", file=sys.stderr)
+            print(STATS_USAGE, file=sys.stderr)
+            sys.exit(2)
+        if show_help:
+            print(STATS_USAGE)
+            return
+        date_from = values.get("--from")
+        date_to = values.get("--to")
+        days = values.get("--days")
         if days is not None:
             from paper_stats import resolve_days_range
             try:
@@ -366,7 +421,7 @@ def main():
                 date_from = days_from
             if date_to is None:
                 date_to = days_to
-        top = _flag_value(rest, "--top")
+        top = values.get("--top")
         top_n = None
         if top is not None:
             from paper_stats import resolve_top_n
@@ -375,11 +430,11 @@ def main():
             except ValueError as e:
                 print(f"stats: {e}", file=sys.stderr)
                 sys.exit(2)
-        cmd_stats(guards, as_json="--json" in rest, as_csv="--csv" in rest,
-                  as_trades="--trades" in rest, as_equity="--equity" in rest,
+        cmd_stats(guards, as_json="--json" in flags, as_csv="--csv" in flags,
+                  as_trades="--trades" in flags, as_equity="--equity" in flags,
                   date_from=date_from,
                   date_to=date_to,
-                  symbols=_flag_value(rest, "--symbols"),
+                  symbols=values.get("--symbols"),
                   top_n=top_n)
         return
     if cmd == "tools":
