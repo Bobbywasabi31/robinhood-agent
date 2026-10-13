@@ -669,3 +669,35 @@ def format_trades_csv(trades):
             f"{pnl:.2f}" if pnl is not None else "",
         ])
     return buf.getvalue()
+
+
+def format_equity_csv(trades):
+    """Render the daily equity curve as CSV (spreadsheets/pandas).
+
+    One row per dated trading day, sorted chronologically: the date, that
+    day's realized P&L, and the running cumulative P&L — the same daily
+    series behind the Sharpe/Sortino/Calmar ratios, plottable straight
+    out of the box. Columns: date,daily_pnl,cumulative_pnl. Money is
+    plain decimal numbers (no $ or thousands separators) so the file
+    parses cleanly. Trades with a missing or unparseable date can't join
+    a time series; they're skipped and counted. Returns (csv_text,
+    undated_excluded). An empty curve yields the header alone, never an
+    error.
+    """
+    daily = {}
+    undated = 0
+    for t in trades:
+        d = _trade_date(t)
+        if d is None:
+            undated += 1
+            continue
+        key = d.isoformat()
+        daily[key] = round(daily.get(key, 0.0) + (t.get("pnl") or 0), 2)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["date", "daily_pnl", "cumulative_pnl"])
+    cum = 0.0
+    for day in sorted(daily):
+        cum = round(cum + daily[day], 2)
+        writer.writerow([day, f"{daily[day]:.2f}", f"{cum:.2f}"])
+    return buf.getvalue(), undated

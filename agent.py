@@ -9,7 +9,7 @@ Commands:
   sell SYMBOL QTY [TARGET] [STOP]  Sell (thesis + guardrails + approval)
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
-  stats [--json|--csv|--trades] [--from DATE] [--to DATE] [--days N]
+  stats [--json|--csv|--trades|--equity] [--from DATE] [--to DATE] [--days N]
         [--symbols A,B] [--top N]   Paper-journal stats
   tools               List raw MCP tools from the server
 
@@ -228,7 +228,8 @@ def extract_order_id(result):
 
 
 def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
-              date_from=None, date_to=None, symbols=None, top_n=None):
+              as_equity=False, date_from=None, date_to=None, symbols=None,
+              top_n=None):
     """Read-only paper-journal stats. Never touches the API or trading logic.
 
     Merges the append-only journal (long-term history) with today's state file
@@ -237,6 +238,9 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     as_csv prints the daily + monthly + per-symbol P&L tables as CSV instead of text.
     as_trades prints one CSV row per paper trade (same --from/--to/--days/--symbols
     filters apply; --top is a leaderboard filter and is ignored with a note).
+    as_equity prints the daily equity curve as CSV (date,daily_pnl,cumulative_pnl;
+    same filters apply; --top is ignored with a note; trades without a valid
+    date are skipped with a stderr note).
     date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
     days (positive int): shortcut for the last N days ending today — fills
     any bound an explicit --from/--to doesn't set.
@@ -246,11 +250,12 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     """
     from paper_stats import (
         compute_stats, default_append_journal_path, format_csv, format_json,
-        format_report, format_trades_csv, load_append_journal, load_journal,
-        merge_trades, prepare_trades,
+        format_report, format_trades_csv, format_equity_csv,
+        load_append_journal, load_journal, merge_trades, prepare_trades,
     )
-    if sum(bool(m) for m in (as_json, as_csv, as_trades)) > 1:
-        print("stats: use only one of --json, --csv or --trades", file=sys.stderr)
+    if sum(bool(m) for m in (as_json, as_csv, as_trades, as_equity)) > 1:
+        print("stats: use only one of --json, --csv, --trades or --equity",
+              file=sys.stderr)
         sys.exit(2)
     trades = merge_trades(
         load_append_journal(default_append_journal_path(guards.base_dir)),
@@ -259,7 +264,7 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     paper = [t for t in trades if t.get("paper")]
     live = [t for t in trades if not t.get("paper")]
     try:
-        if as_trades:
+        if as_trades or as_equity:
             listed, _, _ = prepare_trades(paper, date_from=date_from,
                                           date_to=date_to, symbols=symbols)
         else:
@@ -268,6 +273,19 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     except ValueError as e:
         print(f"stats: bad date: {e}", file=sys.stderr)
         sys.exit(2)
+    if as_equity:
+        if live:
+            print(f"stats: {len(live)} live trade(s) excluded from the "
+                  "equity curve", file=sys.stderr)
+        if top_n is not None:
+            print("stats: --top is ignored with --equity (the curve is a "
+                  "daily series, not a leaderboard)", file=sys.stderr)
+        text, undated = format_equity_csv(listed)
+        if undated:
+            print(f"stats: {undated} trade(s) without a valid date skipped "
+                  "from the equity curve", file=sys.stderr)
+        print(text, end="")
+        return
     if as_trades:
         if live:
             print(f"stats: {len(live)} live trade(s) excluded from the "
@@ -358,7 +376,7 @@ def main():
                 print(f"stats: {e}", file=sys.stderr)
                 sys.exit(2)
         cmd_stats(guards, as_json="--json" in rest, as_csv="--csv" in rest,
-                  as_trades="--trades" in rest,
+                  as_trades="--trades" in rest, as_equity="--equity" in rest,
                   date_from=date_from,
                   date_to=date_to,
                   symbols=_flag_value(rest, "--symbols"),
