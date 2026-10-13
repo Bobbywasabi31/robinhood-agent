@@ -232,13 +232,28 @@ def _month_key(trade):
     return d.strftime("%Y-%m") if d else "undated"
 
 
+def prepare_trades(trades, date_from=None, date_to=None, symbols=None):
+    """Apply the stats filters to a trade list: date range, then symbol list.
+
+    Returns (trades, undated_excluded, symbol_excluded); the survivors are
+    sorted by (date, time) — time alone is wrong once the journal spans
+    days (task 32). compute_stats() and `stats --trades` share this so
+    both see the same trade list; the function is pure, no I/O.
+    """
+    filtered, undated_excluded = filter_trades_by_date(
+        trades, date_from, date_to)
+    wanted = normalize_symbols(symbols)
+    filtered, symbol_excluded = filter_trades_by_symbols(filtered, wanted)
+    filtered = sorted(
+        filtered, key=lambda t: (t.get("date") or "", t.get("time") or ""))
+    return filtered, undated_excluded, symbol_excluded
+
+
 def compute_stats(trades, date_from=None, date_to=None, symbols=None, top_n=None):
     """Crunch a trade list into a stats dict. Pure — no I/O."""
-    trades, undated_excluded = filter_trades_by_date(trades, date_from, date_to)
+    trades, undated_excluded, symbol_excluded = prepare_trades(
+        trades, date_from=date_from, date_to=date_to, symbols=symbols)
     wanted = normalize_symbols(symbols)
-    trades, symbol_excluded = filter_trades_by_symbols(trades, wanted)
-    # Sort by (date, time): time alone is wrong once the journal spans days.
-    trades = sorted(trades, key=lambda t: (t.get("date") or "", t.get("time") or ""))
     n = len(trades)
 
     pnl_values = [t.get("pnl") or 0 for t in trades]
@@ -624,4 +639,33 @@ def format_csv(stats):
         row = stats["by_symbol"][sym]
         writer.writerow(["symbol", sym, row["trades"], row["wins"],
                          row["losses"], f"{row['pnl']:.2f}"])
+    return buf.getvalue()
+
+
+def format_trades_csv(trades):
+    """Render a trade list as CSV, one row per trade (spreadsheets/pandas).
+
+    Columns: date,time,symbol,side,quantity,price,realized_pnl. Money is
+    plain decimal numbers (no $ or thousands separators) so the file parses
+    cleanly; missing fields render as empty cells. The rows mirror
+    prepare_trades() output order (date, then time). An empty list yields
+    the header alone, never an error.
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        ["date", "time", "symbol", "side", "quantity", "price", "realized_pnl"])
+    for t in trades:
+        price = t.get("price")
+        pnl = t.get("pnl")
+        qty = t.get("quantity")
+        writer.writerow([
+            t.get("date") or "",
+            t.get("time") or "",
+            (t.get("symbol") or "").upper(),
+            t.get("side") or "",
+            qty if qty is not None else "",
+            f"{price:.2f}" if price is not None else "",
+            f"{pnl:.2f}" if pnl is not None else "",
+        ])
     return buf.getvalue()
