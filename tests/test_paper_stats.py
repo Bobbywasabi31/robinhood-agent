@@ -20,6 +20,7 @@ from paper_stats import (
     normalize_symbols,
     parse_iso_date,
     resolve_days_range,
+    resolve_months_range,
 )
 
 
@@ -1006,3 +1007,55 @@ def test_streaks_follow_date_then_time_sort():
     s = compute_stats(rows)
     assert s["longest_win_streak"] == 2
     assert s["current_streak"] == {"type": "loss", "length": 1}
+
+
+def test_resolve_months_range():
+    from datetime import date as _d
+    today = _d.today()
+    # N=1: first day of the current month through today.
+    assert resolve_months_range(1) == (_d(today.year, today.month, 1).isoformat(),
+                                      today.isoformat())
+    assert resolve_months_range("1") == (_d(today.year, today.month, 1).isoformat(),
+                                        today.isoformat())
+    # N=3: first day of the month 2 back; month arithmetic crosses year ends.
+    f, t = resolve_months_range("3")
+    month_idx = today.year * 12 + (today.month - 1) - 2
+    year, month0 = divmod(month_idx, 12)
+    assert t == today.isoformat()
+    assert f == _d(year, month0 + 1, 1).isoformat()
+    # N=13: crosses a full year back (works in January too).
+    f, t = resolve_months_range(13)
+    month_idx = today.year * 12 + (today.month - 1) - 12
+    year, month0 = divmod(month_idx, 12)
+    assert t == today.isoformat()
+    assert f == _d(year, month0 + 1, 1).isoformat()
+
+
+def test_resolve_months_range_bad_values():
+    for bad in ("0", "00", "-3", "abc", "1.5", "3 months", "", "  ", None, "007x"):
+        try:
+            resolve_months_range(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad!r}")
+
+
+def test_resolve_months_range_window_filters_trades():
+    # --months window used as (date_from, date_to) keeps trades in the
+    # current calendar month and drops older ones.
+    from datetime import date as _d, timedelta as _td
+    today = _d.today()
+    old = today.replace(day=1) - _td(days=1)  # last day of the prior month
+    rows = [
+        {**trade("09:31:00", "OLD", "buy", 1, 1.0, 0.0), "date": old.isoformat()},
+        {**trade("09:31:00", "NOW", "buy", 1, 1.0, 10.0),
+         "date": today.replace(day=1).isoformat()},
+    ]
+    date_from, date_to = resolve_months_range(1)
+    kept, und = filter_trades_by_date(rows, date_from, date_to)
+    assert und == 0
+    assert [t["symbol"] for t in kept] == ["NOW"]
+    stats = compute_stats(rows, date_from=date_from, date_to=date_to)
+    assert stats["trades"] == 1
+    assert stats["best_trade"]["symbol"] == "NOW"

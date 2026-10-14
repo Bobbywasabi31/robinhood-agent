@@ -10,7 +10,7 @@ Commands:
   paper SYMBOL QTY    Simulate a buy without touching the API
   journal             Today's trade journal + P&L summary
   stats [--json|--csv|--trades|--equity] [--from DATE] [--to DATE] [--days N]
-        [--symbols A,B] [--top N] [--help]   Paper-journal stats
+        [--months N] [--symbols A,B] [--top N] [--help]   Paper-journal stats
   tools               List raw MCP tools from the server
 
 Auth: export ROBINHOOD_MCP_TOKEN="..."
@@ -236,14 +236,18 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     (which rolls daily) so stats survive midnight; duplicates are dropped.
     as_json prints the same stats as machine-readable JSON instead of text;
     as_csv prints the daily + monthly + per-symbol P&L tables as CSV instead of text.
-    as_trades prints one CSV row per paper trade (same --from/--to/--days/--symbols
-    filters apply; --top is a leaderboard filter and is ignored with a note).
+    as_trades prints one CSV row per paper trade (same --from/--to/--days/
+    --months/--symbols filters apply; --top is a leaderboard filter and is
+    ignored with a note).
     as_equity prints the daily equity curve as CSV (date,daily_pnl,cumulative_pnl;
     same filters apply; --top is ignored with a note; trades without a valid
     date are skipped with a stderr note).
     date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
     days (positive int): shortcut for the last N days ending today — fills
-    any bound an explicit --from/--to doesn't set.
+    any bound an explicit --from/--to doesn't set. months (positive int):
+    shortcut for the last N calendar months incl. this one (first day of
+    month N-1 back through today) — fills any bound an explicit --from/--to
+    doesn't set; can't be combined with days.
     symbols ("AAPL,MSFT", case-insensitive) restricts to those tickers.
     top_n (positive int): per-symbol section shows only the top N + bottom N
     tickers by realized P&L (a leaderboard).
@@ -333,7 +337,7 @@ def cmd_journal(guards):
 
 
 STATS_SWITCH_FLAGS = ("--json", "--csv", "--trades", "--equity")
-STATS_VALUE_FLAGS = ("--from", "--to", "--days", "--symbols", "--top")
+STATS_VALUE_FLAGS = ("--from", "--to", "--days", "--months", "--symbols", "--top")
 
 STATS_USAGE = """\
 Usage: python3 agent.py stats [options]
@@ -343,6 +347,8 @@ Read-only paper-journal stats. Never touches the API or trading logic.
   --from YYYY-MM-DD   restrict to a date range (inclusive)
   --to YYYY-MM-DD     restrict to a date range (inclusive)
   --days N            last N days incl. today (explicit --from/--to wins)
+  --months N          last N calendar months incl. this one (explicit
+                      --from/--to wins; can't combine with --days)
   --symbols A,B       restrict to specific tickers (case-insensitive)
   --top N             per-symbol leaderboard: top N + bottom N tickers
   --json              machine-readable JSON instead of the text report
@@ -384,6 +390,32 @@ def parse_stats_args(args):
     return flags, values, help_requested
 
 
+def resolve_range_window(date_from, date_to, days, months):
+    """Apply the --days/--months shortcuts to fill unset --from/--to bounds.
+
+    Returns (date_from, date_to). A shortcut fills only the bounds an
+    explicit --from/--to didn't set. --days and --months can't be combined;
+    garbage values raise ValueError with a human-readable message.
+    """
+    if days is not None and months is not None:
+        raise ValueError("--days and --months can't be combined")
+    if days is not None:
+        from paper_stats import resolve_days_range
+        days_from, days_to = resolve_days_range(days)
+        if date_from is None:
+            date_from = days_from
+        if date_to is None:
+            date_to = days_to
+    elif months is not None:
+        from paper_stats import resolve_months_range
+        months_from, months_to = resolve_months_range(months)
+        if date_from is None:
+            date_from = months_from
+        if date_to is None:
+            date_to = months_to
+    return date_from, date_to
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -407,20 +439,12 @@ def main():
             return
         date_from = values.get("--from")
         date_to = values.get("--to")
-        days = values.get("--days")
-        if days is not None:
-            from paper_stats import resolve_days_range
-            try:
-                days_from, days_to = resolve_days_range(days)
-            except ValueError as e:
-                print(f"stats: {e}", file=sys.stderr)
-                sys.exit(2)
-            # --days supplies the window; an explicit --from/--to wins
-            # the matching bound.
-            if date_from is None:
-                date_from = days_from
-            if date_to is None:
-                date_to = days_to
+        try:
+            date_from, date_to = resolve_range_window(
+                date_from, date_to, values.get("--days"), values.get("--months"))
+        except ValueError as e:
+            print(f"stats: {e}", file=sys.stderr)
+            sys.exit(2)
         top = values.get("--top")
         top_n = None
         if top is not None:

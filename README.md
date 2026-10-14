@@ -45,10 +45,11 @@ python3 agent.py journal             # today's trades + P&L
 python3 agent.py stats              # paper-journal stats: win rate, avg win/loss, Sharpe + Sortino + Calmar ratios (ann), best/worst single trade, win/loss streaks, exposure, drawdown + peak→trough window, daily + monthly + per-symbol P&L (read-only)
 python3 agent.py stats --json     # same stats as machine-readable JSON (for other tools/AIs)
 python3 agent.py stats --csv      # daily + monthly + per-symbol P&L as CSV (spreadsheets, pandas)
-python3 agent.py stats --trades   # one CSV row per paper trade: date,time,symbol,side,quantity,price,realized_pnl (spreadsheets, pandas; composes with --from/--to/--days/--symbols)
-python3 agent.py stats --equity   # daily equity curve as CSV: date,daily_pnl,cumulative_pnl (plottable; composes with --from/--to/--days/--symbols)
+python3 agent.py stats --trades   # one CSV row per paper trade: date,time,symbol,side,quantity,price,realized_pnl (spreadsheets, pandas; composes with --from/--to/--days/--months/--symbols)
+python3 agent.py stats --equity   # daily equity curve as CSV: date,daily_pnl,cumulative_pnl (plottable; composes with --from/--to/--days/--months/--symbols)
 python3 agent.py stats --from 2026-10-01 --to 2026-10-07   # restrict to a date range (inclusive, YYYY-MM-DD)
 python3 agent.py stats --days 7        # last 7 days incl. today (shortcut; explicit --from/--to wins)
+python3 agent.py stats --months 3      # last 3 calendar months incl. this one (shortcut; explicit --from/--to wins; can't combine with --days)
 python3 agent.py stats --symbols AAPL,MSFT   # restrict to specific tickers (case-insensitive)
 python3 agent.py stats --top 5        # per-symbol leaderboard: top 5 + bottom 5 tickers by realized P&L
 python3 agent.py stats --help      # full flag reference (unknown flags fail with this usage)

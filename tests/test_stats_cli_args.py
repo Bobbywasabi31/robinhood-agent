@@ -94,3 +94,57 @@ def test_usage_text_mentions_all_flags():
 def test_agent_module_exports_parse_helpers():
     assert callable(agent.parse_stats_args)
     assert isinstance(agent.STATS_USAGE, str)
+
+
+def test_months_value_flag_captured():
+    flags, values, _ = parse_stats_args(["--months", "3"])
+    assert flags == set()
+    assert values == {"--months": "3"}
+
+
+def test_usage_text_mentions_months():
+    assert "--months" in STATS_USAGE
+
+
+def test_resolve_range_window_conflict_raises():
+    try:
+        agent.resolve_range_window(None, None, "7", "3")
+    except ValueError as e:
+        assert "--days and --months can't be combined" in str(e)
+    else:
+        raise AssertionError("expected ValueError for --days + --months")
+
+
+def test_resolve_range_window_days_fills_unset_bounds():
+    frm, to = agent.resolve_range_window(None, None, "7", None)
+    from paper_stats import resolve_days_range
+    assert (frm, to) == resolve_days_range("7")
+
+
+def test_resolve_range_window_months_fills_unset_bounds():
+    frm, to = agent.resolve_range_window(None, None, None, "3")
+    from paper_stats import resolve_months_range
+    assert (frm, to) == resolve_months_range("3")
+
+
+def test_resolve_range_window_explicit_from_wins_over_months():
+    from paper_stats import resolve_months_range
+    _, expected_to = resolve_months_range("3")
+    frm, to = agent.resolve_range_window("2026-01-01", None, None, "3")
+    assert frm == "2026-01-01"
+    assert to == expected_to
+
+
+def test_resolve_range_window_garbage_months_raises():
+    try:
+        agent.resolve_range_window(None, None, None, "abc")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for garbage --months")
+
+
+def test_resolve_range_window_no_shortcuts_passthrough():
+    assert agent.resolve_range_window("2026-01-01", "2026-01-31",
+                                      None, None) == ("2026-01-01", "2026-01-31")
+    assert agent.resolve_range_window(None, None, None, None) == (None, None)

@@ -122,6 +122,28 @@ def resolve_days_range(days):
     return (today - _timedelta(days=n - 1)).isoformat(), today.isoformat()
 
 
+def resolve_months_range(months):
+    """Resolve a `stats --months N` value into (date_from, date_to) ISO strings.
+
+    The window is the last N calendar months ending today, both bounds
+    inclusive: date_from is the first day of the month N-1 months back,
+    date_to is today. N=1 means the current month to date.
+    Accepts an int or a CLI string; anything that isn't a positive whole
+    number raises ValueError.
+    """
+    s = "" if months is None else str(months).strip()
+    if not re.fullmatch(r"[0-9]+", s):
+        raise ValueError(f"not a positive whole number of months: {months!r}")
+    n = int(s)
+    if n < 1:
+        raise ValueError(f"not a positive whole number of months: {months!r}")
+    today = _date.today()
+    # Month-index arithmetic (no dateutil): index = year*12 + (month-1).
+    month_idx = today.year * 12 + (today.month - 1) - (n - 1)
+    year, month0 = divmod(month_idx, 12)
+    return _date(year, month0 + 1, 1).isoformat(), today.isoformat()
+
+
 def resolve_top_n(value):
     """Resolve a `stats --top N` value into a positive int.
 
