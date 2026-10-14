@@ -664,6 +664,27 @@ def format_csv(stats):
     return buf.getvalue()
 
 
+def _trade_row(t):
+    """One export row for a paper trade, mirroring format_trades_csv's columns.
+
+    Missing fields become None; money is plain rounded floats so both CSV
+    and JSON render parseable decimals.
+    """
+    price = t.get("price")
+    pnl = t.get("pnl")
+    qty = t.get("quantity")
+    symbol = t.get("symbol")
+    return {
+        "date": t.get("date") or None,
+        "time": t.get("time") or None,
+        "symbol": symbol.upper() if symbol else None,
+        "side": t.get("side") or None,
+        "quantity": qty,
+        "price": round(price, 2) if price is not None else None,
+        "realized_pnl": round(pnl, 2) if pnl is not None else None,
+    }
+
+
 def format_trades_csv(trades):
     """Render a trade list as CSV, one row per trade (spreadsheets/pandas).
 
@@ -678,19 +699,55 @@ def format_trades_csv(trades):
     writer.writerow(
         ["date", "time", "symbol", "side", "quantity", "price", "realized_pnl"])
     for t in trades:
-        price = t.get("price")
-        pnl = t.get("pnl")
-        qty = t.get("quantity")
+        row = _trade_row(t)
         writer.writerow([
-            t.get("date") or "",
-            t.get("time") or "",
-            (t.get("symbol") or "").upper(),
-            t.get("side") or "",
-            qty if qty is not None else "",
-            f"{price:.2f}" if price is not None else "",
-            f"{pnl:.2f}" if pnl is not None else "",
+            row["date"] or "",
+            row["time"] or "",
+            row["symbol"] or "",
+            row["side"] or "",
+            row["quantity"] if row["quantity"] is not None else "",
+            f"{row['price']:.2f}" if row["price"] is not None else "",
+            f"{row['realized_pnl']:.2f}"
+            if row["realized_pnl"] is not None else "",
         ])
     return buf.getvalue()
+
+
+def format_trades_json(trades, live_excluded=0):
+    """Render a trade list as machine-readable JSON (for other tools/AIs).
+
+    The same rows as format_trades_csv (column order preserved), with money
+    as JSON numbers and missing fields as null. Carries the live-trade
+    exclusion count in the payload, mirroring format_json().
+    """
+    payload = {"trades": [_trade_row(t) for t in trades],
+               "live_excluded": live_excluded}
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _equity_series(trades):
+    """Build the daily equity curve behind format_equity_csv().
+
+    Returns (rows, undated_excluded): rows is a list of
+    (date, daily_pnl, cumulative_pnl) sorted chronologically; trades with a
+    missing or unparseable date can't join a time series and are skipped
+    and counted. An empty curve yields ([], 0), never an error.
+    """
+    daily = {}
+    undated = 0
+    for t in trades:
+        d = _trade_date(t)
+        if d is None:
+            undated += 1
+            continue
+        key = d.isoformat()
+        daily[key] = round(daily.get(key, 0.0) + (t.get("pnl") or 0), 2)
+    rows = []
+    cum = 0.0
+    for day in sorted(daily):
+        cum = round(cum + daily[day], 2)
+        rows.append((day, daily[day], cum))
+    return rows, undated
 
 
 def format_equity_csv(trades):
@@ -706,20 +763,28 @@ def format_equity_csv(trades):
     undated_excluded). An empty curve yields the header alone, never an
     error.
     """
-    daily = {}
-    undated = 0
-    for t in trades:
-        d = _trade_date(t)
-        if d is None:
-            undated += 1
-            continue
-        key = d.isoformat()
-        daily[key] = round(daily.get(key, 0.0) + (t.get("pnl") or 0), 2)
+    rows, undated = _equity_series(trades)
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["date", "daily_pnl", "cumulative_pnl"])
-    cum = 0.0
-    for day in sorted(daily):
-        cum = round(cum + daily[day], 2)
-        writer.writerow([day, f"{daily[day]:.2f}", f"{cum:.2f}"])
+    for day, daily_pnl, cum in rows:
+        writer.writerow([day, f"{daily_pnl:.2f}", f"{cum:.2f}"])
     return buf.getvalue(), undated
+
+
+def format_equity_json(trades, live_excluded=0):
+    """Render the daily equity curve as machine-readable JSON.
+
+    The same series as format_equity_csv(), with money as JSON numbers.
+    Carries the undated-trade and live-trade exclusion counts in the
+    payload, mirroring format_json().
+    """
+    rows, undated = _equity_series(trades)
+    payload = {
+        "equity": [{"date": day, "daily_pnl": daily_pnl,
+                    "cumulative_pnl": cum}
+                   for day, daily_pnl, cum in rows],
+        "undated_excluded": undated,
+        "live_excluded": live_excluded,
+    }
+    return json.dumps(payload, indent=2, sort_keys=True)

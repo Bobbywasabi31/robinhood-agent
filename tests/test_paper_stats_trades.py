@@ -2,8 +2,9 @@
 
 One CSV row per paper trade (date,time,symbol,side,quantity,price,
 realized_pnl) so the raw journal pipes straight into spreadsheets or
-pandas; composes with --from/--to, --days and --symbols, and refuses
---json/--csv company (exit 2). Read-only — no trading logic involved.
+pandas; composes with --from/--to, --days and --symbols; --trades --json
+renders the same rows as machine-readable JSON; refuses --csv company
+(exit 2). Read-only — no trading logic involved.
 """
 import csv
 import io
@@ -157,7 +158,37 @@ def test_cmd_stats_trades_composes_with_filters():
     assert parsed[1][0] == "2026-10-10"
 
 
-def test_cmd_stats_trades_rejects_json_company():
+def test_cmd_stats_trades_accepts_json_modifier():
+    """agent.py stats --trades --json: parseable JSON rows, live count in payload."""
+    import agent
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace
+
+    rows = [
+        trade("2026-10-09", "2026-10-09T09:31:00", "AAPL", "buy", 1, 200.0, 10.0),
+        trade("2026-10-09", "2026-10-09T10:15:00", "MSFT", "sell", 1, 400.0, -4.0),
+        trade("2026-10-09", "2026-10-09T11:00:00", "NVDA", "buy", 1, 150.0,
+              6.0, paper=False),  # live: counted, not listed
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "paper_journal.jsonl"), "w") as f:
+            for t in rows:
+                f.write(json.dumps(t) + "\n")
+        guards = SimpleNamespace(base_dir=tmp)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            agent.cmd_stats(guards, as_trades=True, as_json=True)
+        payload = json.loads(buf.getvalue())
+    assert payload["live_excluded"] == 1
+    assert len(payload["trades"]) == 2  # live one dropped
+    row = payload["trades"][0]
+    assert row == {"date": "2026-10-09", "time": "2026-10-09T09:31:00",
+                  "symbol": "AAPL", "side": "buy", "quantity": 1,
+                  "price": 200.0, "realized_pnl": 10.0}
+    assert payload["trades"][1]["realized_pnl"] == -4.0
+
+
+def test_cmd_stats_trades_still_rejects_csv_company():
     import agent
     from contextlib import redirect_stderr
     from types import SimpleNamespace
@@ -167,7 +198,7 @@ def test_cmd_stats_trades_rejects_json_company():
         err = io.StringIO()
         try:
             with redirect_stderr(err):
-                agent.cmd_stats(guards, as_trades=True, as_json=True)
+                agent.cmd_stats(guards, as_trades=True, as_csv=True)
         except SystemExit as e:
             assert e.code == 2
         else:

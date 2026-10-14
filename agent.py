@@ -238,10 +238,16 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     as_csv prints the daily + monthly + per-symbol P&L tables as CSV instead of text.
     as_trades prints one CSV row per paper trade (same --from/--to/--days/
     --months/--symbols filters apply; --top is a leaderboard filter and is
-    ignored with a note).
+    ignored with a note); as_trades + as_json renders the same rows as
+    machine-readable JSON instead (live-trade exclusion count in the
+    payload).
     as_equity prints the daily equity curve as CSV (date,daily_pnl,cumulative_pnl;
     same filters apply; --top is ignored with a note; trades without a valid
-    date are skipped with a stderr note).
+    date are skipped with a stderr note); as_equity + as_json renders the
+    same series as machine-readable JSON (undated/live exclusion counts in
+    the payload).
+    as_csv can't combine with as_json (the report's JSON and CSV are
+    separate exports); as_json alone prints the main report as JSON.
     date_from/date_to (YYYY-MM-DD, inclusive) restrict to a date range.
     days (positive int): shortcut for the last N days ending today — fills
     any bound an explicit --from/--to doesn't set. months (positive int):
@@ -254,11 +260,17 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     """
     from paper_stats import (
         compute_stats, default_append_journal_path, format_csv, format_json,
-        format_report, format_trades_csv, format_equity_csv,
+        format_report, format_trades_csv, format_trades_json,
+        format_equity_csv, format_equity_json,
         load_append_journal, load_journal, merge_trades, prepare_trades,
     )
-    if sum(bool(m) for m in (as_json, as_csv, as_trades, as_equity)) > 1:
-        print("stats: use only one of --json, --csv, --trades or --equity",
+    if sum(bool(m) for m in (as_csv, as_trades, as_equity)) > 1:
+        print("stats: use only one of --csv, --trades or --equity",
+              file=sys.stderr)
+        sys.exit(2)
+    if as_json and as_csv:
+        print("stats: --json can't combine with --csv "
+              "(use --trades --json or --equity --json)",
               file=sys.stderr)
         sys.exit(2)
     trades = merge_trades(
@@ -278,12 +290,15 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
         print(f"stats: bad date: {e}", file=sys.stderr)
         sys.exit(2)
     if as_equity:
-        if live:
-            print(f"stats: {len(live)} live trade(s) excluded from the "
-                  "equity curve", file=sys.stderr)
         if top_n is not None:
             print("stats: --top is ignored with --equity (the curve is a "
                   "daily series, not a leaderboard)", file=sys.stderr)
+        if as_json:
+            print(format_equity_json(listed, live_excluded=len(live)))
+            return
+        if live:
+            print(f"stats: {len(live)} live trade(s) excluded from the "
+                  "equity curve", file=sys.stderr)
         text, undated = format_equity_csv(listed)
         if undated:
             print(f"stats: {undated} trade(s) without a valid date skipped "
@@ -291,12 +306,15 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
         print(text, end="")
         return
     if as_trades:
-        if live:
-            print(f"stats: {len(live)} live trade(s) excluded from the "
-                  "per-trade CSV", file=sys.stderr)
         if top_n is not None:
             print("stats: --top is ignored with --trades (per-trade "
                   "listing is not a leaderboard)", file=sys.stderr)
+        if as_json:
+            print(format_trades_json(listed, live_excluded=len(live)))
+            return
+        if live:
+            print(f"stats: {len(live)} live trade(s) excluded from the "
+                  "per-trade CSV", file=sys.stderr)
         print(format_trades_csv(listed), end="")
         return
     if as_csv:
@@ -354,7 +372,9 @@ Read-only paper-journal stats. Never touches the API or trading logic.
   --json              machine-readable JSON instead of the text report
   --csv               daily + monthly + per-symbol P&L as CSV
   --trades            one CSV row per paper trade
+  --trades --json     same per-trade rows as machine-readable JSON
   --equity            daily equity curve as CSV
+  --equity --json     same equity curve as machine-readable JSON
   --help, -h          show this help
 """
 

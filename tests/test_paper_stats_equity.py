@@ -3,8 +3,9 @@
 One row per dated trading day, sorted chronologically: date, the day's
 realized P&L, and the running cumulative P&L — the same daily series
 behind the Sharpe/Sortino/Calmar ratios, plottable straight out of the
-box. Composes with --from/--to, --days and --symbols, and refuses
---json/--csv/--trades company (exit 2). Read-only — no trading logic.
+box. Composes with --from/--to, --days and --symbols; --equity --json
+renders the same series as machine-readable JSON; refuses --csv/--trades
+company (exit 2). Read-only — no trading logic.
 """
 import csv
 import io
