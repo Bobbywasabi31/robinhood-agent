@@ -1,7 +1,7 @@
 {
  "description": "S&P 500 constituents with GICS sectors",
- "updated": "2026-10-07",
- "source": "S&P Dow Jones Indices announcements (PR Newswire 2026-10-01; effective Oct 1 & Oct 6, 2026)",
+ "updated": "2026-10-14",
+ "source": "S&P Dow Jones Indices announcements (PR Newswire 2026-10-01; effective Oct 1 & Oct 6, 2026) + PSKY->SKYD ticker change (Paramount Skydance renamed Skydance Corp, Nasdaq->NYSE, effective Oct 6, 2026)",
  "sp500": [
   "A",
   "AAPL",
@@ -381,7 +381,6 @@
   "PPL",
   "PRU",
   "PSA",
-  "PSKY",
   "PSX",
   "PTC",
   "PWR",
@@ -408,6 +407,7 @@
   "SCHW",
   "SHW",
   "SJM",
+  "SKYD",
   "SLB",
   "SMCI",
   "SNA",
@@ -2047,10 +2047,6 @@
    "sector": "Real Estate"
   },
   {
-   "symbol": "PSKY",
-   "sector": "Communication Services"
-  },
-  {
    "symbol": "PSX",
    "sector": "Energy"
   },
@@ -2153,6 +2149,10 @@
   {
    "symbol": "SJM",
    "sector": "Consumer Staples"
+  },
+  {
+   "symbol": "SKYD",
+   "sector": "Communication Services"
   },
   {
    "symbol": "SLB",
