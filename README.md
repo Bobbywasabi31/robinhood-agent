@@ -83,7 +83,9 @@ Check the universe against Wikipedia's current constituent list any time:
 `python3 scripts/check_universe_drift.py` (exit 0 = clean, 1 = drift found,
 2 = the page could not be fetched or parsed). It also verifies the
 Materials-sector flag, so a sector change is reported the same as a
-ticker change.
+ticker change. The same check runs in CI every Monday
+(`.github/workflows/universe-drift.yml`) and fails the run when drift is
+found; an unreachable Wikipedia page only warns, never fails.
 
 ## Safety design
 

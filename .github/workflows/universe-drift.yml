@@ -1,0 +1,47 @@
+name: S&P 500 universe drift check
+
+# The S&P 500 universe in universe.json is hand-maintained; this catches
+# ticker renames, sector changes and index adds/removes automatically.
+# Run weekly — drift fails the job (visible in Actions), but a failed
+# fetch/parse of the Wikipedia page is only a warning, never a red run.
+
+on:
+  schedule:
+    - cron: "0 12 * * 1" # Mondays 12:00 UTC
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run universe drift check
+        id: drift
+        run: |
+          set +e
+          python3 scripts/check_universe_drift.py
+          code=$?
+          set -e
+          case $code in
+            0) echo "result=clean" >> "$GITHUB_OUTPUT";;
+            1) echo "result=drift" >> "$GITHUB_OUTPUT";;
+            2) echo "result=unavailable" >> "$GITHUB_OUTPUT";;
+          esac
+          exit 0
+
+      - name: Note skipped check (Wikipedia unreachable)
+        if: steps.drift.outputs.result == 'unavailable'
+        run: |
+          echo "::warning::Universe drift check skipped — the Wikipedia page could not be fetched or parsed."
+
+      - name: Fail on drift
+        if: steps.drift.outputs.result == 'drift'
+        run: |
+          echo "S&P 500 universe drift detected — see the check output above." >&2
+          exit 1
