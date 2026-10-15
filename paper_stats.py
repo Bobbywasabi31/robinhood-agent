@@ -268,6 +268,12 @@ def _week_key(trade):
     return f"{iso_year}-W{iso_week:02d}"
 
 
+def _quarter_key(trade):
+    """Calendar-quarter bucket (YYYY-Qn) for a trade; undated when no date."""
+    d = _trade_date(trade)
+    return f"{d.year}-Q{(d.month - 1) // 3 + 1}" if d else "undated"
+
+
 def prepare_trades(trades, date_from=None, date_to=None, symbols=None):
     """Apply the stats filters to a trade list: date range, then symbol list.
 
@@ -305,6 +311,9 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None, top_n=None
 
     # Per-week realized P&L (one row per ISO week, YYYY-Www).
     by_week = _bucket_stats(trades, _week_key)
+
+    # Per-quarter realized P&L (one row per calendar quarter, YYYY-Qn).
+    by_quarter = _bucket_stats(trades, _quarter_key)
 
     # Annualized Sharpe ratio over the daily P&L series: mean(daily P&L)
     # / sample-stdev(daily P&L), scaled by sqrt(252) trading days. Summed
@@ -474,6 +483,7 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None, top_n=None
         "positions": positions,
         "by_symbol": by_symbol,
         "by_day": by_day,
+        "by_quarter": by_quarter,
         "by_month": by_month,
         "by_week": by_week,
         "max_drawdown": round(max_dd, 2),
@@ -581,6 +591,12 @@ def format_report(stats):
         f"  Gross notional:     {money(stats['gross_notional'])}",
         f"  Open exposure:      {money(stats['open_exposure'])}",
     ]
+    if stats["by_quarter"]:
+        lines.append("  Quarterly P&L:")
+        for quarter in sorted(stats["by_quarter"]):
+            row = stats["by_quarter"][quarter]
+            wl = f"({row['wins']}W/{row['losses']}L)"
+            lines.append(f"    {quarter}: {money(row['pnl'])} over {row['trades']} trades {wl}")
     if stats["by_month"]:
         lines.append("  Monthly P&L:")
         for month in sorted(stats["by_month"]):
@@ -640,7 +656,8 @@ def format_csv(stats):
     trades), streak (longest win/loss streaks and the current one),
     risk (annualized Sharpe/Sortino/Calmar ratios; trades = dated trading
     days used, pnl = the ratio — no $ involved), day (one row per day, sorted), month (one row
-    per calendar month, sorted), week (one row per ISO week, sorted), symbol (one row
+    per calendar month, sorted), quarter (one row per calendar quarter, sorted),
+    week (one row per ISO week, sorted), symbol (one row
     per ticker, sorted).
     Empty breakdowns produce no rows, never an error.
     """
@@ -681,6 +698,10 @@ def format_csv(stats):
     for month in sorted(stats["by_month"]):
         row = stats["by_month"][month]
         writer.writerow(["month", month, row["trades"], row["wins"],
+                         row["losses"], f"{row['pnl']:.2f}"])
+    for quarter in sorted(stats["by_quarter"]):
+        row = stats["by_quarter"][quarter]
+        writer.writerow(["quarter", quarter, row["trades"], row["wins"],
                          row["losses"], f"{row['pnl']:.2f}"])
     for week in sorted(stats["by_week"]):
         row = stats["by_week"][week]

@@ -42,9 +42,9 @@ python3 agent.py quote LIN           # get a quote
 python3 agent.py buy LIN 10 520 470  # buy 10, target $520, stop $470 (writes thesis, asks approval)
 python3 agent.py paper LIN 10        # simulate without touching the API
 python3 agent.py journal             # today's trades + P&L
-python3 agent.py stats              # paper-journal stats: win rate, avg win/loss, Sharpe + Sortino + Calmar ratios (ann), best/worst single trade, win/loss streaks, exposure, drawdown + peak→trough window, daily + weekly + monthly + per-symbol P&L (read-only)
+python3 agent.py stats              # paper-journal stats: win rate, avg win/loss, Sharpe + Sortino + Calmar ratios (ann), best/worst single trade, win/loss streaks, exposure, drawdown + peak→trough window, daily + weekly + monthly + quarterly + per-symbol P&L (read-only)
 python3 agent.py stats --json     # same stats as machine-readable JSON (for other tools/AIs)
-python3 agent.py stats --csv      # daily + weekly + monthly + per-symbol P&L as CSV (spreadsheets, pandas)
+python3 agent.py stats --csv      # daily + weekly + monthly + quarterly + per-symbol P&L as CSV (spreadsheets, pandas)
 python3 agent.py stats --trades   # one CSV row per paper trade: date,time,symbol,side,quantity,price,realized_pnl (spreadsheets, pandas; composes with --from/--to/--days/--months/--symbols)
 python3 agent.py stats --trades --json   # same per-trade rows as machine-readable JSON (for other tools/AIs)
 python3 agent.py stats --equity   # daily equity curve as CSV: date,daily_pnl,cumulative_pnl (plottable; composes with --from/--to/--days/--months/--symbols)

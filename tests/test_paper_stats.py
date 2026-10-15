@@ -699,27 +699,29 @@ def _csv_rows(text):
 
 
 def test_format_csv_header_and_sections():
-    """CSV header plus one row per section: summary, best/worst, streak, day, month, week, sym."""
+    """CSV header plus one row per section: summary, best/worst, streak,
+    day, month, quarter, week, sym."""
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
     assert rows[0] == ["section", "key", "trades", "wins", "losses", "pnl"]
     body = rows[1:]
     assert [r[0] for r in body] == [
         "summary", "best", "worst",
         "streak", "streak", "streak",  # longest_win, longest_loss, current_loss
-        "day", "month", "week", "symbol", "symbol",
+        "day", "month", "quarter", "week", "symbol", "symbol",
     ]
     assert body[0][1] == "ALL"
     assert body[3][1] == "longest_win"
     assert body[6][1] == "2026-10-09"
     assert body[7] == ["month", "2026-10", "3", "1", "1", "5.00"]
-    assert body[8] == ["week", "2026-W41", "3", "1", "1", "5.00"]
-    assert [r[1] for r in body[9:]] == ["AAPL", "MSFT"]  # sorted
+    assert body[8] == ["quarter", "2026-Q4", "3", "1", "1", "5.00"]
+    assert body[9] == ["week", "2026-W41", "3", "1", "1", "5.00"]
+    assert [r[1] for r in body[10:]] == ["AAPL", "MSFT"]  # sorted
 
 
 def test_format_csv_values_match_stats():
     rows = _csv_rows(format_csv(compute_stats(FIXTURE)))
     (summary, best, worst, streak_win, streak_loss, streak_cur,
-     day, month, week, aapl, msft) = rows[1:]
+     day, month, quarter, week, aapl, msft) = rows[1:]
     assert summary[2:] == ["3", "1", "1", "5.00"]
     assert best == ["best", "AAPL 2026-10-09", "1", "1", "0", "10.00"]
     assert worst == ["worst", "AAPL 2026-10-09", "1", "0", "1", "-5.00"]
@@ -728,6 +730,7 @@ def test_format_csv_values_match_stats():
     assert streak_cur == ["streak", "current_loss", "1", "0", "1", ""]
     assert day[2:] == ["3", "1", "1", "5.00"]
     assert month == ["month", "2026-10", "3", "1", "1", "5.00"]
+    assert quarter == ["quarter", "2026-Q4", "3", "1", "1", "5.00"]
     assert week == ["week", "2026-W41", "3", "1", "1", "5.00"]
     assert aapl[2:] == ["2", "1", "1", "5.00"]
     assert msft[2:] == ["1", "0", "0", "0.00"]
