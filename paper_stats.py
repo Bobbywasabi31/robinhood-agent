@@ -254,6 +254,20 @@ def _month_key(trade):
     return d.strftime("%Y-%m") if d else "undated"
 
 
+def _week_key(trade):
+    """ISO-week bucket (YYYY-Www) for a trade; undated when no date.
+
+    ISO weeks start Monday, so a week never straddles two buckets, and the
+    ISO year is used (a Saturday 2028-01-01 belongs to 2027-W52, which is
+    where its trades actually happened).
+    """
+    d = _trade_date(trade)
+    if d is None:
+        return "undated"
+    iso_year, iso_week, _ = d.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
 def prepare_trades(trades, date_from=None, date_to=None, symbols=None):
     """Apply the stats filters to a trade list: date range, then symbol list.
 
@@ -288,6 +302,9 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None, top_n=None
 
     # Per-month realized P&L (one row per calendar month, YYYY-MM).
     by_month = _bucket_stats(trades, _month_key)
+
+    # Per-week realized P&L (one row per ISO week, YYYY-Www).
+    by_week = _bucket_stats(trades, _week_key)
 
     # Annualized Sharpe ratio over the daily P&L series: mean(daily P&L)
     # / sample-stdev(daily P&L), scaled by sqrt(252) trading days. Summed
@@ -458,6 +475,7 @@ def compute_stats(trades, date_from=None, date_to=None, symbols=None, top_n=None
         "by_symbol": by_symbol,
         "by_day": by_day,
         "by_month": by_month,
+        "by_week": by_week,
         "max_drawdown": round(max_dd, 2),
         "max_drawdown_start": dd_start.isoformat() if dd_start else None,
         "max_drawdown_end": dd_end.isoformat() if dd_end else None,
@@ -569,6 +587,12 @@ def format_report(stats):
             row = stats["by_month"][month]
             wl = f"({row['wins']}W/{row['losses']}L)"
             lines.append(f"    {month}: {money(row['pnl'])} over {row['trades']} trades {wl}")
+    if stats["by_week"]:
+        lines.append("  Weekly P&L:")
+        for week in sorted(stats["by_week"]):
+            row = stats["by_week"][week]
+            wl = f"({row['wins']}W/{row['losses']}L)"
+            lines.append(f"    {week}: {money(row['pnl'])} over {row['trades']} trades {wl}")
     if stats["by_day"]:
         lines.append("  Daily P&L:")
         for day in sorted(stats["by_day"]):
@@ -616,7 +640,8 @@ def format_csv(stats):
     trades), streak (longest win/loss streaks and the current one),
     risk (annualized Sharpe/Sortino/Calmar ratios; trades = dated trading
     days used, pnl = the ratio — no $ involved), day (one row per day, sorted), month (one row
-    per calendar month, sorted), symbol (one row per ticker, sorted).
+    per calendar month, sorted), week (one row per ISO week, sorted), symbol (one row
+    per ticker, sorted).
     Empty breakdowns produce no rows, never an error.
     """
     buf = io.StringIO()
@@ -656,6 +681,10 @@ def format_csv(stats):
     for month in sorted(stats["by_month"]):
         row = stats["by_month"][month]
         writer.writerow(["month", month, row["trades"], row["wins"],
+                         row["losses"], f"{row['pnl']:.2f}"])
+    for week in sorted(stats["by_week"]):
+        row = stats["by_week"][week]
+        writer.writerow(["week", week, row["trades"], row["wins"],
                          row["losses"], f"{row['pnl']:.2f}"])
     for sym in _symbol_order(stats):
         row = stats["by_symbol"][sym]

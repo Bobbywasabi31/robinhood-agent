@@ -235,7 +235,7 @@ def cmd_stats(guards, as_json=False, as_csv=False, as_trades=False,
     Merges the append-only journal (long-term history) with today's state file
     (which rolls daily) so stats survive midnight; duplicates are dropped.
     as_json prints the same stats as machine-readable JSON instead of text;
-    as_csv prints the daily + monthly + per-symbol P&L tables as CSV instead of text.
+    as_csv prints the daily + weekly + monthly + per-symbol P&L tables as CSV instead of text.
     as_trades prints one CSV row per paper trade (same --from/--to/--days/
     --months/--symbols filters apply; --top is a leaderboard filter and is
     ignored with a note); as_trades + as_json renders the same rows as
@@ -370,7 +370,7 @@ Read-only paper-journal stats. Never touches the API or trading logic.
   --symbols A,B       restrict to specific tickers (case-insensitive)
   --top N             per-symbol leaderboard: top N + bottom N tickers
   --json              machine-readable JSON instead of the text report
-  --csv               daily + monthly + per-symbol P&L as CSV
+  --csv               daily + weekly + monthly + per-symbol P&L as CSV
   --trades            one CSV row per paper trade
   --trades --json     same per-trade rows as machine-readable JSON
   --equity            daily equity curve as CSV
