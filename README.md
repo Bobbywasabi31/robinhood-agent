@@ -76,8 +76,14 @@ now, position sizing, what would invalidate the thesis, and a verdict.
 ## Trading universe
 
 Restricted to **S&P 500** constituents (503 names, `universe.json`), with the
-25 Materials names flagged (LIN, SHW, APD, ECL, FCX, NEM, …). Set via the
+24 Materials names flagged (LIN, SHW, APD, ECL, FCX, NEM, …). Set via the
 `universe` key in guardrails.json: `sp500` | `materials` | `sp500+materials` | `any`.
+
+Check the universe against Wikipedia's current constituent list any time:
+`python3 scripts/check_universe_drift.py` (exit 0 = clean, 1 = drift found,
+2 = the page could not be fetched or parsed). It also verifies the
+Materials-sector flag, so a sector change is reported the same as a
+ticker change.
 
 ## Safety design
 
