@@ -13,6 +13,9 @@ on:
 jobs:
   drift:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -25,8 +28,8 @@ jobs:
         id: drift
         run: |
           set +e
-          python3 scripts/check_universe_drift.py
-          code=$?
+          python3 scripts/check_universe_drift.py | tee drift-output.txt
+          code=${PIPESTATUS[0]}
           set -e
           case $code in
             0) echo "result=clean" >> "$GITHUB_OUTPUT";;
@@ -39,6 +42,12 @@ jobs:
         if: steps.drift.outputs.result == 'unavailable'
         run: |
           echo "::warning::Universe drift check skipped — the Wikipedia page could not be fetched or parsed."
+
+      - name: Open drift issue (deduped)
+        if: steps.drift.outputs.result == 'drift'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/open-drift-issue.sh drift-output.txt
 
       - name: Fail on drift
         if: steps.drift.outputs.result == 'drift'

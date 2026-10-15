@@ -85,7 +85,10 @@ Check the universe against Wikipedia's current constituent list any time:
 Materials-sector flag, so a sector change is reported the same as a
 ticker change. The same check runs in CI every Monday
 (`.github/workflows/universe-drift.yml`) and fails the run when drift is
-found; an unreachable Wikipedia page only warns, never fails.
+found; an unreachable Wikipedia page only warns, never fails. On drift the
+workflow also opens a single deduplicated "universe drift detected" issue
+(`scripts/open-drift-issue.sh`) so the finding is visible outside Actions;
+no duplicate is filed while one is open.
 
 ## Safety design
 
